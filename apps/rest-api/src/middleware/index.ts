@@ -1,0 +1,25 @@
+/**
+ * @module @kb-labs/rest-api-app/middleware
+ * Middleware registration
+ */
+
+import type { FastifyInstance } from 'fastify';
+import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import { registerEnvelopeMiddleware } from './envelope.js';
+import { registerRequestIdMiddleware } from './request-id.js';
+import { registerMockModeMiddleware } from './mock-mode.js';
+import { registerSecurityHeadersMiddleware } from './security-headers.js';
+
+/**
+ * Register all middleware
+ */
+export function registerMiddleware(
+  server: FastifyInstance,
+  config: RestApiConfig
+): void {
+  registerSecurityHeadersMiddleware(server);
+  registerRequestIdMiddleware(server);
+  registerMockModeMiddleware(server, config);
+  registerEnvelopeMiddleware(server, config);
+}
+

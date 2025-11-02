@@ -1,0 +1,39 @@
+{
+  "name": "@kb-labs/rest-api-app",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "scripts": {
+    "clean": "rimraf dist",
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "test": "vitest run -c ../../vitest.config.ts",
+    "test:watch": "vitest -c ../../vitest.config.ts"
+  },
+  "dependencies": {
+    "@kb-labs/rest-api-core": "workspace:*",
+    "@kb-labs/core-sys": "link:../../../kb-labs-core/packages/sys",
+    "fastify": "^4.24.3",
+    "@fastify/cors": "^8.4.0",
+    "@fastify/rate-limit": "^9.1.0",
+    "pino": "^8.16.2",
+    "pino-pretty": "^10.2.3",
+    "zod": "^3.22.4",
+    "ulid": "^2.3.0",
+    "execa": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "@kb-labs/devkit": "link:../../../kb-labs-devkit",
+    "tsup": "^8",
+    "tsx": "^4.20.5",
+    "vitest": "^3",
+    "typescript": "^5"
+  }
+}
+
