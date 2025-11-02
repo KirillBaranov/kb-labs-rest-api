@@ -1,335 +1,386 @@
-# KB Labs REST API
+# KB Labs REST API (@kb-labs/rest-api)
 
-REST API сервис для KB Labs CLI инструментов — единый HTTP-слой поверх CLI (audit, release, devlink, mind, analytics).
+> **REST API layer for KB Labs CLI tools.** Unified HTTP interface for audit, release, devlink, mind, and analytics commands.
 
-## 🎯 Цели
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node.js](https://img.shields.io/badge/Node.js-18.18.0+-green.svg)](https://nodejs.org/)
+[![pnpm](https://img.shields.io/badge/pnpm-9.0.0+-orange.svg)](https://pnpm.io/)
 
-- Предоставить Studio и внешним клиентам единый REST-слой поверх CLI инструментов
-- Обеспечить стабильные контракты (DTO + error model), очереди задач и детерминируемые артефакты
-- Быть расширяемым (адаптеры/плагины), безопасным (auth+RBAC), наблюдаемым (логинг/метрики), воспроизводимым (mock mode)
+## 🎯 Vision
+
+KB Labs REST API provides a production-ready HTTP layer over KB Labs CLI tools, enabling web applications and other services to interact with the KB Labs ecosystem through a unified REST interface. It bridges the gap between CLI tools and web-based UIs, making all KB Labs functionality accessible via HTTP.
+
+The project solves the problem of integrating CLI tools into web applications by providing a secure, scalable, and type-safe REST API layer. It enables real-time job execution, status tracking, and integration with modern web frameworks while maintaining security through enhanced sandboxing and validation.
+
+This project is part of the **@kb-labs** ecosystem and integrates seamlessly with KB Labs CLI, Core, and Studio web UI.
 
 ## 🚀 Quick Start
 
+### Installation
+
 ```bash
-# Установить зависимости
+# From KB Labs monorepo root
+cd kb-labs-rest-api
 pnpm install
-
-# Собрать пакеты
 pnpm build
-
-# Запустить сервер
-cd apps/rest-api
-pnpm start
-# или
-pnpm dev  # с hot reload
 ```
 
-Сервер запустится на `http://localhost:3001` (по умолчанию).
+### Development
 
-## 📁 Структура
+```bash
+# Start REST API server
+cd apps/rest-api
+pnpm dev
+
+# Server will start on http://localhost:3001
+# API base path: /api/v1
+```
+
+### Configuration
+
+Create `.env` file or set environment variables:
+
+```bash
+# Server configuration
+PORT=3001
+KB_REST_BASE_PATH=/api/v1
+KB_REST_API_VERSION=1.0.0
+
+# CORS configuration
+KB_REST_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+KB_REST_CORS_PROFILE=dev  # dev | preview | prod
+
+# Queue configuration
+KB_REST_QUEUE_DRIVER=memory  # memory | bullmq
+
+# Storage configuration
+KB_REST_STORAGE_DRIVER=fs  # fs | s3
+
+# Mock mode (for testing)
+KB_REST_MOCK_MODE=false
+```
+
+### Basic Usage
+
+#### Health Check
+
+```bash
+curl http://localhost:3001/api/v1/health/live
+```
+
+#### Create Audit Run
+
+```bash
+curl -X POST http://localhost:3001/api/v1/audit/runs \
+  -H "Content-Type: application/json" \
+  -d '{"scope": "packages/*"}'
+```
+
+#### Get Job Status
+
+```bash
+curl http://localhost:3001/api/v1/jobs/{jobId}
+```
+
+## ✨ Features
+
+- **Unified API**: Single REST interface for all CLI tools (audit, release, devlink, mind, analytics)
+- **Job Queue**: Asynchronous task execution with status tracking and retry policies
+- **Real-time Updates**: SSE (Server-Sent Events) for job progress monitoring
+- **Type Safety**: Shared contracts via `@kb-labs/api-contracts` with Zod schema validation
+- **Production Ready**: Security headers, CORS, rate limiting, caching, comprehensive error handling
+- **Idempotency**: Support for `Idempotency-Key` header for consistent results
+- **Mock Mode**: Per-request or global mock mode for testing
+- **Observability**: Structured logging, metrics, and request tracing
+
+## 📁 Repository Structure
 
 ```
 kb-labs-rest-api/
 ├── apps/
-│   └── rest-api/              # Fastify приложение
-│       ├── src/
-│       │   ├── server.ts       # Настройка Fastify
-│       │   ├── bootstrap.ts   # Запуск сервера
-│       │   ├── routes/         # Маршруты
-│       │   ├── middleware/     # Middleware (envelope, request-id, mock-mode)
-│       │   ├── plugins/        # Fastify plugins (CORS, rate-limit)
-│       │   └── services/       # Service factory
-│       └── package.json
+│   ├── rest-api/            # Fastify application (main server)
+│   └── demo/                # Demo application
 ├── packages/
-│   └── rest-api-core/         # @kb-labs/rest-api-core (public)
-│       └── src/
-│           ├── contracts/     # Zod схемы запрос/ответ
-│           ├── ports/         # Интерфейсы (CliPort, StoragePort, QueuePort, AuthPort)
-│           ├── adapters/      # Реализации (CLI, FS storage, memory queue, none auth)
-│           ├── services/      # Бизнес-логика (AuditService, ReleaseService, etc.)
-│           ├── jobs/          # Job executors
-│           ├── config/        # Конфигурация (schema + loader)
-│           ├── mocks/         # Mock данные
-│           └── utils/         # Утилиты
-└── kb-labs.config.json         # Конфигурация (секция rest)
+│   └── rest-api-core/       # Core library (ports, adapters, services)
+├── docs/                    # Documentation
+│   ├── adr/                  # Architecture Decision Records
+│   ├── architecture.md      # System design
+│   ├── examples.md          # API usage examples
+│   └── docker.md            # Docker deployment guide
+└── scripts/                 # Utility scripts
 ```
 
-## ⚙️ Конфигурация
+### Directory Descriptions
 
-Конфигурация загружается из `kb-labs.config.json` и переменных окружения (KB_REST_*):
+- **`apps/rest-api/`** - Fastify-based REST API server application
+- **`apps/demo/`** - Demo application demonstrating API usage
+- **`packages/rest-api-core/`** - Core library with ports, adapters, and services
+- **`docs/`** - Comprehensive documentation including ADRs, guides, and examples
+
+## 📦 Packages
+
+| Package | Description |
+|---------|-------------|
+| [@kb-labs/rest-api-core](./packages/rest-api-core/) | Core library with ports (interfaces), adapters (implementations), and services (business logic) |
+| [@kb-labs/rest-api-app](./apps/rest-api/) | Fastify application server |
+
+### Package Details
+
+**@kb-labs/rest-api-core** provides the core library architecture:
+- **Ports**: Interfaces (CLI, Storage, Queue, Auth)
+- **Adapters**: Implementations (ExecaCliAdapter, FsStorageAdapter, MemoryQueueAdapter)
+- **Services**: Business logic (AuditService, ReleaseService, DevLinkService, MindService, AnalyticsService)
+- **Contracts**: Request/response validation via Zod schemas
+
+**@kb-labs/rest-api-app** provides the Fastify application:
+- Route handlers for all API endpoints
+- Middleware (security, caching, rate limiting, metrics)
+- Server bootstrap and configuration
+- OpenAPI documentation generation
+
+## 🛠️ Available Scripts
+
+| Script | Description |
+|--------|-------------|
+| `pnpm dev` | Start development mode for REST API server |
+| `pnpm build` | Build all packages |
+| `pnpm build:clean` | Clean and build all packages |
+| `pnpm test` | Run all tests |
+| `pnpm test:coverage` | Run tests with coverage reporting |
+| `pnpm test:watch` | Run tests in watch mode |
+| `pnpm lint` | Lint all code |
+| `pnpm lint:fix` | Fix linting issues |
+| `pnpm format` | Format code with Prettier |
+| `pnpm type-check` | TypeScript type checking |
+| `pnpm check` | Run lint, type-check, and tests |
+| `pnpm ci` | Full CI pipeline (clean, build, check) |
+| `pnpm clean` | Clean build artifacts |
+| `pnpm clean:all` | Clean all node_modules and build artifacts |
+
+## 📋 Development Policies
+
+- **Code Style**: ESLint + Prettier, TypeScript strict mode
+- **Testing**: Vitest with contract tests, integration tests, and E2E tests
+- **Versioning**: SemVer with automated releases through Changesets
+- **Architecture**: Document decisions in ADRs (see `docs/adr/`)
+- **API Design**: RESTful API with consistent envelope format
+- **Security**: Enhanced CLI sandboxing, input validation, and security headers
+
+## 🔧 Requirements
+
+- **Node.js**: >= 18.18.0
+- **pnpm**: >= 9.0.0
+
+## ⚙️ Configuration
+
+### Environment Variables
+
+The REST API server can be configured via environment variables:
+
+- **PORT**: Server port (default: 3001)
+- **KB_REST_BASE_PATH**: API base path (default: `/api/v1`)
+- **KB_REST_API_VERSION**: API version (default: `1.0.0`)
+- **KB_REST_CORS_ORIGINS**: Comma-separated list of allowed CORS origins
+- **KB_REST_CORS_PROFILE**: CORS profile (dev | preview | prod)
+- **KB_REST_QUEUE_DRIVER**: Queue driver (memory | bullmq)
+- **KB_REST_STORAGE_DRIVER**: Storage driver (fs | s3)
+- **KB_REST_MOCK_MODE**: Enable mock mode globally (true | false)
+
+### Job Queue Configuration
+
+Configure retry policies and cleanup in `kb-labs.config.json`:
 
 ```json
 {
-  "rest": {
-    "port": 3001,
-    "basePath": "/api/v1",
-    "apiVersion": "1.0.0",
-    "auth": {
-      "mode": "none"
-    },
+  "restApi": {
     "queue": {
-      "driver": "memory",
-      "maxConcurrent": {
-        "audit": 2,
-        "release": 1,
-        "devlink": 2
+      "retry": {
+        "maxRetries": 3,
+        "backoff": {
+          "type": "exponential",
+          "delay": 1000
+        }
+      },
+      "cleanup": {
+        "enabled": true,
+        "intervalSec": 3600,
+        "ttlSec": 86400,
+        "cleanupArtifacts": true
       }
-    },
-    "cli": {
-      "bin": "pnpm",
-      "prefix": ["kb"],
-      "timeoutSec": 900
-    },
-    "storage": {
-      "driver": "fs",
-      "baseDir": ".kb/rest"
-    },
-    "mockMode": false,
-    "cors": {
-      "origins": ["http://localhost:3000"]
     }
   }
 }
 ```
 
-### Переменные окружения
+## 📚 API Documentation
 
-- `KB_REST_PORT` — порт сервера
-- `KB_REST_BASE_PATH` — базовый путь API
-- `KB_REST_AUTH_MODE` — режим аутентификации (none/jwt/apiKey)
-- `KB_REST_QUEUE_DRIVER` — драйвер очереди (memory/bullmq)
-- `KB_REST_STORAGE_DRIVER` — драйвер хранилища (fs/s3)
-- `KB_REST_MOCK_MODE` — включить mock mode (true/1)
+### Base URL
 
-## 📡 API Endpoints
+- **Development**: `http://localhost:3001/api/v1`
+- **OpenAPI Spec**: `http://localhost:3001/api/v1/openapi.json`
+- **Swagger UI** (dev only): `http://localhost:3001/api/v1/docs`
 
-### Health & System
+### Response Format
 
-- `GET /api/v1/health/live` — проверка доступности сервера
-- `GET /api/v1/health/ready` — проверка готовности (queue/FS/CLI)
-- `GET /api/v1/info` — информация о сервере (cwd, profiles, plugins, apiVersion)
-- `GET /api/v1/info/capabilities` — доступные команды и адаптеры
-- `GET /api/v1/config` — конфигурация (redacted, маскирует секреты)
-- `GET /openapi.json` — OpenAPI спецификация
-
-### Audit
-
-- `POST /api/v1/audit/run` — запустить аудит (асинхронно, возвращает jobId/runId)
-  - Поддерживает `Idempotency-Key` header
-- `GET /api/v1/audit/runs` — список запусков (cursor pagination: `?cursor&limit&status&since`)
-- `GET /api/v1/audit/runs/:runId` — статус конкретного запуска
-- `GET /api/v1/audit/report/latest` — последний отчет
-- `GET /api/v1/audit/summary` — агрегированная сводка
-
-### Release
-
-- `POST /api/v1/release/preview` — предпросмотр релиза (синхронно)
-- `POST /api/v1/release/run` — запустить релиз (асинхронно)
-  - Поддерживает `Idempotency-Key` header
-- `GET /api/v1/release/runs/:runId` — статус запуска
-- `GET /api/v1/release/changelog` — changelog (поддерживает `?format=markdown|json`)
-
-### DevLink
-
-- `POST /api/v1/devlink/check` — проверить DevLink (асинхронно)
-  - Поддерживает `Idempotency-Key` header
-- `GET /api/v1/devlink/summary` — сводка (cycles, mismatches)
-- `GET /api/v1/devlink/graph` — граф зависимостей
-
-### Mind
-
-- `GET /api/v1/mind/summary` — сводка (freshness, drift)
-
-### Analytics
-
-- `GET /api/v1/analytics/summary` — сводка за период (`?start&end`)
-
-### Jobs
-
-- `GET /api/v1/jobs/:jobId` — статус задачи
-- `GET /api/v1/jobs/:jobId/logs` — логи задачи (с пагинацией `?offset`)
-- `GET /api/v1/jobs/:jobId/logs/stream` — SSE поток логов
-- `POST /api/v1/jobs/:jobId/cancel` — отменить задачу
-
-## 📝 Формат ответов
-
-Все ответы в едином envelope формате:
+All responses use an envelope format:
 
 ```json
-// Успех
 {
   "ok": true,
-  "data": { ... },
+  "data": { /* response data */ },
   "meta": {
-    "requestId": "01JC3N9F5H7V6Q5X9X0W4ZC3YF",
-    "durationMs": 12,
-    "schemaVersion": "1.0.0"
+    "requestId": "01K...",
+    "durationMs": 123,
+    "apiVersion": "1.0.0"
   }
 }
+```
 
-// Ошибка
+### Error Format
+
+```json
 {
   "ok": false,
   "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Validation error",
-    "details": { ... },
-    "cause": "..."
+    "code": "E_TOOL_AUDIT",
+    "message": "Audit failed",
+    "details": { /* error details */ },
+    "cause": "CLI exit code: 1",
+    "traceId": "01K..."
   },
   "meta": {
-    "requestId": "...",
-    "durationMs": 3
+    "requestId": "01K...",
+    "durationMs": 45,
+    "apiVersion": "1.0.0"
   }
 }
 ```
 
-## 🔐 Безопасность (MVP)
+### Key Endpoints
 
-- **Auth mode**: `none` по умолчанию (для локальной разработки)
-- **RBAC**: Заготовлены роли `viewer` / `operator` / `admin` (заглушка)
-- **CLI Sandbox**: Whitelist команд, запрет `cwd` вне repo root, защита от path traversal
-- **Rate limiting**: 60 req/sec по умолчанию
-- **CORS**: Настраивается через конфиг
+#### System
 
-## 🧪 Mock Mode
+- `GET /health/live` — Health check (always returns 200)
+- `GET /health/ready` — Readiness check (200 if ready, 503 if not)
+- `GET /info` — System information
+- `GET /info/capabilities` — Available adapters and commands
+- `GET /info/config` — Redacted configuration
 
-Mock mode позволяет возвращать детерминированные ответы без выполнения реальных CLI команд:
+#### Audit
 
-- **Глобальный**: `mockMode: true` в конфиге
-- **Per-request**: Header `KB-Mock: true`
+- `POST /audit/runs` — Create audit run (returns `jobId` and `runId`)
+- `GET /audit/runs` — List audit runs (cursor pagination)
+- `GET /audit/runs/:runId` — Get audit run status
+- `GET /audit/summary` — Get audit summary
+- `GET /audit/report/latest` — Get latest audit report
+
+#### Jobs
+
+- `GET /jobs/:jobId` — Get job status
+- `GET /jobs/:jobId/logs` — Get job logs
+- `GET /jobs/:jobId/events` — Subscribe to job events (SSE)
+- `POST /jobs/:jobId/cancel` — Cancel a running job
+
+#### Release
+
+- `POST /release/preview` — Preview release plan
+- `POST /release/runs` — Create release run
+- `GET /release/runs/:runId` — Get release run status
+- `GET /release/changelog` — Get changelog
+
+### Advanced Features
+
+#### Idempotency
+
+Support `Idempotency-Key` header to ensure consistent results:
 
 ```bash
-# Пример с per-request mock
-curl -H "KB-Mock: true" http://localhost:3001/api/v1/audit/summary
-```
-
-## 📚 Примеры использования
-
-### Запуск аудита
-
-```bash
-# Запустить аудит
-curl -X POST http://localhost:3001/api/v1/audit/run \
+curl -X POST http://localhost:3001/api/v1/audit/runs \
+  -H "Idempotency-Key: my-unique-key" \
   -H "Content-Type: application/json" \
-  -H "Idempotency-Key: unique-key-123" \
-  -d '{"scope":"packages/*","strict":true}'
-
-# Ответ:
-# {
-#   "ok": true,
-#   "data": {"runId": "...", "jobId": "..."},
-#   "meta": {...}
-# }
+  -d '{"scope": "packages/*"}'
 ```
 
-### Проверка статуса задачи
+#### Server-Sent Events (SSE)
+
+Subscribe to job events in real-time:
 
 ```bash
-# Получить статус
-curl http://localhost:3001/api/v1/jobs/01JC3N9F5H7V6Q5X9X0W4ZC3YF
-
-# Ответ:
-# {
-#   "ok": true,
-#   "data": {
-#     "jobId": "...",
-#     "status": "completed",
-#     "startedAt": "...",
-#     "finishedAt": "..."
-#   }
-# }
+curl -N http://localhost:3001/api/v1/jobs/{jobId}/events
 ```
 
-### Просмотр логов (SSE)
+#### Caching
+
+API supports ETag and Last-Modified headers:
 
 ```bash
-# SSE stream логов
-curl -N http://localhost:3001/api/v1/jobs/01JC3N9F5H7V6Q5X9X0W4ZC3YF/logs/stream
+curl -H "If-None-Match: \"abc123\"" \
+  http://localhost:3001/api/v1/audit/report/latest
 ```
 
-### Предпросмотр релиза
+## 🔒 Security
 
-```bash
-curl -X POST http://localhost:3001/api/v1/release/preview \
-  -H "Content-Type: application/json" \
-  -d '{"strategy":"independent"}'
-```
+- **Security Headers**: HSTS, X-Frame-Options, X-Content-Type-Options, etc.
+- **CORS**: Configurable profiles (dev, preview, prod)
+- **Rate Limiting**: Per-IP and per-route limits
+- **Enhanced CLI Sandboxing**:
+  - Command whitelist validation
+  - Argument sanitization (prevents injection attacks)
+  - CWD restrictions (within repo root)
+  - Path traversal protection
+  - Environment variable blocklist (PATH, LD_*, etc.)
+  - Command binary validation
+- **Input Validation**: Zod schema validation for all requests
 
-## 🛠️ Разработка
+## 📊 Observability
 
-```bash
-# Установить зависимости
-pnpm install
+- **Structured Logging**: Pino logger with correlation IDs
+- **Request ID**: `X-Request-Id` header for request tracking
+- **Metrics**: Request, latency, error, and job metrics
+  - `GET /metrics` — Prometheus format
+  - `GET /metrics/json` — JSON format
+- **Error Tracking**: Full error envelope with traceId
 
-# Собрать все пакеты
-pnpm build
+## 📚 Documentation
 
-# Проверить типы
-pnpm type-check
+- [Documentation Standard](./docs/DOCUMENTATION.md) - Full documentation guidelines
+- [Contributing Guide](./CONTRIBUTING.md) - How to contribute
+- [Architecture Decisions](./docs/adr/) - ADRs for this project
 
-# Запустить линтер
-pnpm lint
+**Guides:**
+- [Architecture](./docs/architecture.md) — System design and architecture
+- [Examples](./docs/examples.md) — API usage examples
+- [Docker Guide](./docs/docker.md) — Docker deployment guide
+- [Compatibility Check](./docs/compatibility-check.md) — CLI → REST API → Studio compatibility
+- [Completion Checklist](./docs/completion-checklist.md) — Feature completion status
 
-# Запустить тесты
-pnpm test
+**Integration:**
+- [API Contracts](https://github.com/KirillBaranov/kb-labs-api-contracts/blob/main/packages/api-contracts/README.md) — Shared API contracts
+- [Studio Integration](https://github.com/KirillBaranov/kb-labs-studio/blob/main/README.md) — Web UI integration
 
-# Запустить в dev режиме
-pnpm dev
-```
+## 🔗 Related Packages
 
-## 📦 Пакеты
+### Dependencies
 
-- **@kb-labs/rest-api-core** — Core бизнес-логика, порты, адаптеры, сервисы
-- **@kb-labs/rest-api-app** — Fastify приложение (private)
+- [@kb-labs/core](https://github.com/KirillBaranov/kb-labs-core) - Core utilities and infrastructure abstractions
+- [@kb-labs/api-contracts](https://github.com/KirillBaranov/kb-labs-api-contracts) - Shared API contracts (Zod schemas)
 
-## 🧩 Расширяемость
+### Used By
 
-### Порты и адаптеры
+- [kb-labs-studio](https://github.com/KirillBaranov/kb-labs-studio) - Web UI for KB Labs
 
-- **CliPort**: Исполнение CLI команд (реализация: `ExecaCliAdapter`)
-- **StoragePort**: Хранение артефактов (реализация: `FsStorageAdapter`)
-- **QueuePort**: Очередь задач (реализация: `MemoryQueueAdapter`)
-- **AuthPort**: Аутентификация/авторизация (реализация: `NoneAuthAdapter`)
+### Ecosystem
 
-### Плагины
+- [KB Labs](https://github.com/KirillBaranov/kb-labs) - Main ecosystem repository
 
-Плагины загружаются через конфиг (`rest.plugins`):
+## 🤝 Contributing
 
-```json
-{
-  "rest": {
-    "plugins": ["@kb-labs/plugin-example"]
-  }
-}
-```
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and contribution process.
 
-Каждый плагин экспортирует:
-```typescript
-interface RestApiPlugin {
-  manifest: { api: string; name: string };
-  routes?: (fastify: FastifyInstance) => void;
-  services?: Record<string, unknown>;
-}
-```
-
-## 📋 Принятые решения (ADR)
-
-- **ADR-0001**: Архитектура и структура репозитория
-- **ADR-0002**: Плагины и расширяемость
-- **ADR-0003**: Границы пакетов и модулей
-- **ADR-0004**: Версионирование и политика релизов
-
-## 🔮 Дорожная карта (после MVP)
-
-- [ ] S3 StoragePort для артефактов
-- [ ] BullMQ QueuePort + Redis (персистентные задачи)
-- [ ] JWT/API Key Auth адаптеры
-- [ ] Release safeguards: require audit.overall.ok=true или --force
-- [ ] Streaming logs через SSE/WebSocket (реализовано частично)
-- [ ] Rate limiting per-route + burst control
-- [ ] Prometheus metrics + OTEL трассировка
-- [ ] Плагины 1-й партии: changelog, security
-
-## 📄 Лицензия
+## 📄 License
 
 MIT © KB Labs
+
+---
+
+**See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and contribution process.**
