@@ -7,14 +7,9 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import {
   createAuditRunRequestSchema,
-  createAuditRunResponseSchema,
-  getAuditRunResponseSchema,
-  listAuditRunsQuerySchema,
-  listAuditRunsResponseSchema,
-  getAuditReportResponseSchema,
   getAuditSummaryResponseSchema,
-  successEnvelopeSchema,
-} from '@kb-labs/rest-api-core';
+  listAuditRunsQuerySchema,
+} from '@kb-labs/api-contracts';
 import { createServices } from '../services/index.js';
 
 /**
@@ -26,27 +21,36 @@ export function registerAuditRoutes(
   repoRoot: string
 ): void {
   const basePath = config.basePath;
-  const services = createServices(config, repoRoot);
+  // Reuse services from server instance (created in registerRoutes)
+  const services = server.services || createServices(config, repoRoot);
 
-  // POST /audit/run
-  server.post(`${basePath}/audit/run`, {
+  // POST /audit/runs
+  server.post(`${basePath}/audit/runs`, {
     schema: {
       body: { type: 'object' },
       response: { 202: { type: 'object' } },
     },
   }, async (request, reply) => {
-    // Validate request body
-    const requestBody = createAuditRunRequestSchema.parse(request.body);
-    const idempotencyKey = (request.headers['idempotency-key'] as string) || undefined;
+    try {
+      // Validate request body
+      const requestBody = createAuditRunRequestSchema.parse(request.body);
+      const idempotencyKey = (request.headers['idempotency-key'] as string) || undefined;
 
-    const result = await services.audit.createRun({
-      ...requestBody,
-      idempotencyKey: idempotencyKey || requestBody.idempotencyKey,
-    });
+      const result = await services.audit.createRun({
+        ...requestBody,
+        idempotencyKey: idempotencyKey || requestBody.idempotencyKey,
+      });
 
-    reply.code(202);
-    // Return only data - envelope middleware will wrap it
-    return result;
+      reply.code(202);
+      // Return only data - envelope middleware will wrap it
+      // Ensure we return a plain object, not undefined
+      return result || { jobId: 'error', runId: 'error' };
+    } catch (error) {
+      // Log error for debugging
+      request.log.error({ error }, 'Error creating audit run');
+      // Re-throw to let error handler process it
+      throw error;
+    }
   });
 
   // GET /audit/runs

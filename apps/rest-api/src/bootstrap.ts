@@ -34,5 +34,23 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   });
 
   console.log(`REST API server listening on ${address}`);
+
+  // Setup graceful shutdown
+  const shutdown = async (signal: string) => {
+    console.log(`Received ${signal}, shutting down gracefully...`);
+    
+    // Stop cleanup task
+    if ((server as any).stopCleanup) {
+      (server as any).stopCleanup();
+    }
+    
+    // Close server
+    await server.close();
+    console.log('Server closed');
+    process.exit(0);
+  };
+
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 

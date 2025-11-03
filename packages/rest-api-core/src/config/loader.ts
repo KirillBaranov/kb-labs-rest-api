@@ -42,7 +42,7 @@ export async function loadRestApiConfig(
   
   // Default configuration
   const defaults: RestApiConfig = {
-    port: 3001,
+    port: 5050,
     basePath: '/api/v1',
     apiVersion: '1.0.0',
     auth: {
@@ -58,6 +58,12 @@ export async function loadRestApiConfig(
         devlink: 2,
       },
       defaultPriority: 0,
+      cleanup: {
+        enabled: true,
+        intervalSec: 3600, // 1 hour
+        ttlSec: 86400, // 24 hours
+        cleanupArtifacts: true,
+      },
     },
     cli: {
       bin: 'pnpm',
@@ -74,6 +80,7 @@ export async function loadRestApiConfig(
     cors: {
       origins: ['http://localhost:3000'],
       allowCredentials: true,
+      profile: 'dev',
     },
   };
   

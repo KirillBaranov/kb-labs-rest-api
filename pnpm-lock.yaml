@@ -78,6 +78,9 @@ importers:
       '@fastify/rate-limit':
         specifier: ^9.1.0
         version: 9.1.0
+      '@kb-labs/api-contracts':
+        specifier: link:../../../kb-labs-api-contracts/packages/api-contracts
+        version: link:../../../kb-labs-api-contracts/packages/api-contracts
       '@kb-labs/core-sys':
         specifier: link:../../../kb-labs-core/packages/sys
         version: link:../../../kb-labs-core/packages/sys
@@ -124,6 +127,9 @@ importers:
 
   packages/rest-api-core:
     dependencies:
+      '@kb-labs/api-contracts':
+        specifier: link:../../../kb-labs-api-contracts/packages/api-contracts
+        version: link:../../../kb-labs-api-contracts/packages/api-contracts
       '@kb-labs/core-bundle':
         specifier: link:../../../kb-labs-core/packages/bundle
         version: link:../../../kb-labs-core/packages/bundle

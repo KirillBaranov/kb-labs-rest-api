@@ -1,0 +1,41 @@
+# Development Dockerfile for KB Labs REST API
+# This Dockerfile is optimized for development with hot reload
+
+FROM node:20-alpine
+
+# Install build dependencies and git
+RUN apk add --no-cache python3 make g++ git curl
+
+# Set working directory
+WORKDIR /app
+
+# Install pnpm
+RUN npm install -g pnpm@latest
+
+# Copy package files
+COPY pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY package.json ./
+COPY packages/rest-api-core/package.json ./packages/rest-api-core/
+COPY apps/rest-api/package.json ./apps/rest-api/
+
+# Install all dependencies (including dev)
+RUN pnpm install --frozen-lockfile
+
+# Copy source code
+COPY packages ./packages
+COPY apps ./apps
+
+# Create volume mount point for storage
+RUN mkdir -p /app/.kb/rest
+
+# Expose port
+EXPOSE 3001
+
+# Set environment variables
+ENV NODE_ENV=development
+ENV PORT=3001
+
+# Use dev command with watch mode
+CMD ["pnpm", "--filter", "@kb-labs/rest-api-app", "dev"]
+
+

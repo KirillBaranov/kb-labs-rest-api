@@ -2,12 +2,12 @@
 FROM node:20-alpine AS builder
 
 # Install build dependencies
-RUN apk add --no-cache python3 make g++
+RUN apk add --no-cache python3 make g++ git
 
 # Set working directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files (for dependency resolution)
 COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY package.json ./
 COPY packages/rest-api-core/package.json ./packages/rest-api-core/
@@ -17,10 +17,17 @@ COPY apps/rest-api/package.json ./apps/rest-api/
 RUN npm install -g pnpm@latest
 
 # Install dependencies
+# Note: For link: dependencies to work, they must be available at build time
+# In production, use published packages instead of link: dependencies
 RUN pnpm install --frozen-lockfile
 
 # Copy source code
-COPY . .
+COPY packages/rest-api-core/src ./packages/rest-api-core/src
+COPY packages/rest-api-core/tsconfig.json ./packages/rest-api-core/tsconfig.json
+COPY packages/rest-api-core/tsup.config.ts ./packages/rest-api-core/tsup.config.ts
+COPY apps/rest-api/src ./apps/rest-api/src
+COPY apps/rest-api/tsconfig.json ./apps/rest-api/tsconfig.json
+COPY apps/rest-api/tsup.config.ts ./apps/rest-api/tsup.config.ts
 
 # Build the application
 RUN pnpm --filter @kb-labs/rest-api-core build
@@ -45,18 +52,22 @@ COPY --chown=nodejs:nodejs package.json ./
 COPY --chown=nodejs:nodejs packages/rest-api-core/package.json ./packages/rest-api-core/
 COPY --chown=nodejs:nodejs apps/rest-api/package.json ./apps/rest-api/
 
-# Install pnpm and production dependencies
-RUN npm install -g pnpm@latest && \
-    pnpm install --prod --frozen-lockfile && \
-    npm uninstall -g pnpm
+# Install pnpm (keep it for runtime, may be needed for dynamic installs)
+RUN npm install -g pnpm@latest
+
+# Install production dependencies only
+RUN pnpm install --prod --frozen-lockfile --no-optional
 
 # Copy built application from builder
 COPY --from=builder --chown=nodejs:nodejs /app/packages/rest-api-core/dist ./packages/rest-api-core/dist
 COPY --from=builder --chown=nodejs:nodejs /app/apps/rest-api/dist ./apps/rest-api/dist
 
-# Copy core bundle dependencies if needed
+# Copy production node_modules from builder
+# Copy only necessary runtime dependencies
 COPY --from=builder --chown=nodejs:nodejs /app/node_modules/.pnpm ./node_modules/.pnpm
 COPY --from=builder --chown=nodejs:nodejs /app/packages/rest-api-core/node_modules ./packages/rest-api-core/node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/apps/rest-api/node_modules ./apps/rest-api/node_modules
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules/.modules.yaml ./node_modules/.modules.yaml
 
 # Create volume for storage
 RUN mkdir -p /app/.kb/rest && chown -R nodejs:nodejs /app/.kb

@@ -19,7 +19,8 @@ export function createDevlinkCheckExecutor(cli: CliPort, storage: StoragePort): 
     const result = await cli.run('devlink', args, {
       cwd: context.repoRoot,
       timeoutMs: 900000,
-    });
+      jobId: context.jobId, // Pass jobId for cancellation
+    } as any);
 
     if (result.code !== 0) {
       const errorCode = mapCliExitCodeToErrorCode(result.code, 'devlink');

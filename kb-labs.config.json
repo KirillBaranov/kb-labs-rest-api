@@ -3,7 +3,7 @@
     "enabled": true
   },
   "rest": {
-    "port": 3001,
+    "port": 5050,
     "basePath": "/api/v1",
     "auth": {
       "mode": "none"

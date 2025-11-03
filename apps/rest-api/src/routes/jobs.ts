@@ -8,8 +8,7 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import {
   jobResponseSchema,
   jobLogsResponseSchema,
-  successEnvelopeSchema,
-} from '@kb-labs/rest-api-core';
+} from '@kb-labs/api-contracts';
 import { createServices } from '../services/index.js';
 
 /**
@@ -21,7 +20,106 @@ export function registerJobsRoutes(
   repoRoot: string
 ): void {
   const basePath = config.basePath;
-  const services = createServices(config, repoRoot);
+  // Reuse services from server instance (created in registerRoutes)
+  const services = server.services || createServices(config, repoRoot);
+
+  // GET /jobs/:jobId/events (SSE)
+  server.get(`${basePath}/jobs/:jobId/events`, {
+    schema: {
+      response: {
+        200: {
+          type: 'object',
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { jobId } = request.params as { jobId: string };
+    
+    // Set SSE headers
+    reply.raw.setHeader('Content-Type', 'text/event-stream');
+    reply.raw.setHeader('Cache-Control', 'no-cache');
+    reply.raw.setHeader('Connection', 'keep-alive');
+    reply.raw.setHeader('X-Accel-Buffering', 'no');
+
+    // Check if job exists
+    const job = await services.queue.getStatus(jobId);
+    if (!job) {
+      reply.raw.write(`data: ${JSON.stringify({ type: 'error', message: 'Job not found' })}\n\n`);
+      reply.raw.end();
+      return;
+    }
+
+    // Subscribe to job events
+    const queueAdapter = services.queue as any;
+    if (!queueAdapter.subscribeToJobEvents) {
+      // Fallback: poll job status
+      let lastStatus = job.status;
+      const interval = setInterval(async () => {
+        const currentJob = await services.queue.getStatus(jobId);
+        if (!currentJob) {
+          clearInterval(interval);
+          reply.raw.end();
+          return;
+        }
+
+        if (currentJob.status !== lastStatus) {
+          const event = {
+            type: currentJob.status === 'completed' ? 'job.finished' : 
+                  currentJob.status === 'failed' ? 'job.failed' : 
+                  currentJob.status === 'running' ? 'job.started' : 'job.queued',
+            jobId,
+            timestamp: new Date().toISOString(),
+            data: { status: currentJob.status, progress: currentJob.progress, error: currentJob.error },
+          };
+          reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+          lastStatus = currentJob.status;
+
+          if (currentJob.status === 'completed' || currentJob.status === 'failed' || currentJob.status === 'cancelled') {
+            clearInterval(interval);
+            reply.raw.end();
+          }
+        }
+      }, 1000);
+
+      // Cleanup on client disconnect
+      request.raw.on('close', () => {
+        clearInterval(interval);
+      });
+    } else {
+      // Use event subscription
+      const unsubscribe = queueAdapter.subscribeToJobEvents(jobId, (event: any) => {
+        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+        
+        // End stream on final states
+        if (event.type === 'job.finished' || event.type === 'job.failed') {
+          unsubscribe();
+          reply.raw.end();
+        }
+      });
+
+      // Cleanup on client disconnect
+      request.raw.on('close', () => {
+        unsubscribe();
+      });
+
+      // Send initial event with current job state
+      const initialEvent = {
+        type: job.status === 'queued' ? 'job.queued' : 
+              job.status === 'running' ? 'job.started' :
+              job.status === 'completed' ? 'job.finished' : 'job.failed',
+        jobId,
+        timestamp: new Date().toISOString(),
+        data: { status: job.status, progress: job.progress, error: job.error },
+      };
+      reply.raw.write(`data: ${JSON.stringify(initialEvent)}\n\n`);
+
+      // If job is already finished, close the stream
+      if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+        unsubscribe();
+        reply.raw.end();
+      }
+    }
+  });
 
   // GET /jobs/:jobId/logs/stream (SSE)
   server.get(`${basePath}/jobs/:jobId/logs/stream`, {

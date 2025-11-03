@@ -7,7 +7,7 @@
   "scripts": {
     "clean": "rimraf dist",
     "build": "tsup",
-    "dev": "tsup --watch",
+    "dev": "tsx watch src/index.ts",
     "start": "node dist/index.js",
     "type-check": "tsc --noEmit",
     "lint": "eslint .",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@kb-labs/rest-api-core": "workspace:*",
+    "@kb-labs/api-contracts": "link:../../../kb-labs-api-contracts/packages/api-contracts",
     "@kb-labs/core-sys": "link:../../../kb-labs-core/packages/sys",
     "fastify": "^4.24.3",
     "@fastify/cors": "^8.4.0",

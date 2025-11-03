@@ -30,7 +30,7 @@ export interface CliPort {
    * Execute a CLI command
    * @param cmd - Command name (e.g., 'audit')
    * @param args - Command arguments
-   * @param opts - Execution options
+   * @param opts - Execution options (may include jobId for cancellation)
    * @returns Execution result with exit code, stdout, and stderr
    */
   run(
@@ -51,5 +51,12 @@ export interface CliPort {
     args: string[],
     opts?: CliExecutionOptions
   ): AsyncIterable<string>;
+
+  /**
+   * Cancel active process for a job (optional, for cancellation support)
+   * @param jobId - Job ID
+   * @returns True if process was cancelled, false if not found
+   */
+  cancelProcess?(jobId: string): boolean;
 }
 

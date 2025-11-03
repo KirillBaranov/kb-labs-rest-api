@@ -19,7 +19,8 @@ export function createReleaseRunExecutor(cli: CliPort, storage: StoragePort): Jo
     const result = await cli.run('release', args, {
       cwd: context.repoRoot,
       timeoutMs: 900000,
-    });
+      jobId: context.jobId, // Pass jobId for cancellation
+    } as any);
 
     if (result.code !== 0) {
       const errorCode = mapCliExitCodeToErrorCode(result.code, 'release');

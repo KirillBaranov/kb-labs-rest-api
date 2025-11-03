@@ -9,7 +9,7 @@ import { z } from 'zod';
  * REST API configuration schema
  */
 export const restApiConfigSchema = z.object({
-  port: z.number().int().positive().default(3001),
+  port: z.number().int().positive().default(5050),
   basePath: z.string().default('/api/v1'),
   apiVersion: z.string().default('1.0.0'),
   
@@ -36,6 +36,12 @@ export const restApiConfigSchema = z.object({
         delay: z.number().int().positive().default(1000),
       }).optional(),
     }).optional(),
+    cleanup: z.object({
+      enabled: z.boolean().default(true),
+      intervalSec: z.number().int().positive().default(3600), // 1 hour
+      ttlSec: z.number().int().positive().default(86400), // 24 hours
+      cleanupArtifacts: z.boolean().default(true),
+    }).optional(),
   }).default({}),
   
   cli: z.object({
@@ -59,6 +65,7 @@ export const restApiConfigSchema = z.object({
   cors: z.object({
     origins: z.array(z.string()).default(['http://localhost:3000']),
     allowCredentials: z.boolean().default(true),
+    profile: z.enum(['dev', 'preview', 'prod']).default('dev'),
   }).default({}),
   
   timeouts: z.object({

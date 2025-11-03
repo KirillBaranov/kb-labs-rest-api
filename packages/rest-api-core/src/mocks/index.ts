@@ -8,8 +8,23 @@ import { ulid } from 'ulid';
 /**
  * Generate mock audit summary
  */
-export function mockAuditSummary() {
+import type { GetAuditSummaryResponse } from '@kb-labs/api-contracts';
+
+export function mockAuditSummary(): GetAuditSummaryResponse['data'] {
+  const ts = new Date().toISOString();
   return {
+    ts,
+    totals: {
+      packages: 17,
+      ok: 10,
+      warn: 5,
+      fail: 2,
+      durationMs: 45000,
+    },
+    topFailures: [
+      { pkg: '@kb-labs/example', checks: ['style', 'types'] },
+      { pkg: '@kb-labs/test', checks: ['tests'] },
+    ],
     overall: {
       ok: true,
       severity: 'low' as const,
@@ -19,7 +34,7 @@ export function mockAuditSummary() {
       warning: 5,
       info: 10,
     },
-    lastRunAt: new Date().toISOString(),
+    lastRunAt: ts,
   };
 }
 

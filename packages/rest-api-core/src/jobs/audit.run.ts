@@ -15,11 +15,12 @@ export function createAuditRunExecutor(cli: CliPort, storage: StoragePort): JobE
   return async (payload: JobPayload, context: JobContext): Promise<JobResult> => {
     const { args } = payload;
 
-    // Execute CLI command
+    // Execute CLI command (pass jobId for cancellation support)
     const result = await cli.run('audit', args, {
       cwd: context.repoRoot,
       timeoutMs: (payload.timeoutSec as number) * 1000 || 900000,
-    });
+      jobId: context.jobId, // Pass jobId for cancellation
+    } as any);
 
     if (result.code !== 0) {
       const errorCode = mapCliExitCodeToErrorCode(result.code, 'audit');
@@ -46,11 +47,39 @@ export function createAuditRunExecutor(cli: CliPort, storage: StoragePort): JobE
     const reportPath = `runs/audit/${context.runId || context.jobId}/report.json`;
     await storage.writeJson(reportPath, report);
 
-    // Create summary
+    // Transform CLI output to api-contracts format
+    const reportData = report as any;
+    const ts = new Date().toISOString();
+    const overall = reportData.overall || { ok: true, severity: 'none' };
+    const counts = reportData.counts || {};
+    
+    // Derive totals from counts or mock if needed
+    const totals = {
+      packages: counts.packages ?? counts.total ?? 0,
+      ok: counts.ok ?? counts.passed ?? 0,
+      warn: counts.warn ?? counts.warnings ?? 0,
+      fail: counts.fail ?? counts.failed ?? 0,
+      durationMs: counts.durationMs ?? reportData.durationMs ?? 0,
+    };
+    
+    // Extract topFailures from CLI output or mock empty array
+    const topFailures = reportData.topFailures ?? 
+                       reportData.failures?.slice(0, 10) ?? 
+                       [];
+
+    // Create summary in api-contracts format
     const summary = {
-      finishedAt: new Date().toISOString(),
-      overall: (report as any).overall || { ok: true, severity: 'none' },
-      counts: (report as any).counts || {},
+      ts,
+      totals,
+      topFailures: topFailures.map((f: any) => ({
+        pkg: f.pkg ?? f.name ?? f.package ?? '',
+        checks: f.checks ?? f.failedChecks ?? [],
+      })),
+      // Backward compatibility
+      finishedAt: ts,
+      overall,
+      counts,
+      lastRunAt: ts,
     };
 
     const summaryPath = `runs/audit/${context.runId || context.jobId}/summary.json`;

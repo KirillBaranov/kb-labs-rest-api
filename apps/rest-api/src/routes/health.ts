@@ -5,14 +5,12 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import {
-  capabilitiesResponseSchema,
-  configResponseSchema,
-  infoResponseSchema,
-} from '@kb-labs/rest-api-core';
+// Health routes don't need schema imports - they return data directly
+// Envelope middleware wraps the responses
 import { readdir, writeFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { execa } from 'execa';
+import { createServices } from '../services/index.js';
 
 const startTime = Date.now();
 
@@ -57,12 +55,25 @@ export function registerHealthRoutes(
     },
   }, async (request, reply) => {
     const checks: Record<string, boolean> = {};
+    const queueStats: Record<string, unknown> = {};
     let allReady = true;
 
-    // Check queue availability (in-memory queue is always available)
+    // Check queue availability and get stats
     try {
-      // For memory queue, just check if it's initialized
-      checks.queue = true;
+      // Reuse services from server instance
+      const services = (request.server as any).services || createServices(config, repoRoot);
+      const queueAdapter = services.queue as any;
+      
+      if (queueAdapter.getStats) {
+        const stats = queueAdapter.getStats();
+        checks.queue = true;
+        queueStats.size = stats.size;
+        queueStats.running = stats.running;
+        queueStats.queued = stats.queued;
+        queueStats.capacity = stats.capacity;
+      } else {
+        checks.queue = true;
+      }
     } catch {
       checks.queue = false;
       allReady = false;
@@ -94,13 +105,15 @@ export function registerHealthRoutes(
     const status = allReady ? 'ok' : 'not ready';
     const statusCode = allReady ? 200 : 503;
 
-    reply.code(statusCode);
+    // Set status code before returning - envelope middleware will wrap it
+    reply.status(statusCode);
     return {
       status,
       version: config.apiVersion,
       node: process.version,
       uptimeSec: Math.floor((Date.now() - startTime) / 1000),
       checks,
+      queue: Object.keys(queueStats).length > 0 ? queueStats : undefined,
     };
   });
 

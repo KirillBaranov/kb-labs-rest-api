@@ -1,20 +1,67 @@
-node_modules
-dist
-.kb
-.git
-.vscode
-*.log
-*.md
-.env*
-*.test.ts
-*.spec.ts
-__tests__
-coverage
-.nyc_output
-tsconfig.json
-vitest.config.ts
-*.config.ts
-apps/*/src
-packages/*/src
-packages/*/__tests__
+# Dependencies
+node_modules/
+**/node_modules/
+**/dist/
+**/.next/
+**/.nuxt/
+**/.cache/
 
+# Build artifacts
+dist/
+build/
+*.tsbuildinfo
+
+# Development files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+coverage/
+.nyc_output/
+*.log
+*.test.js
+*.spec.js
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+.travis.yml
+
+# IDE
+*.iml
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Misc
+.eslintcache
+.prettiercache
+pnpm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Docker
+Dockerfile.dev
+docker-compose*.yml
+.dockerignore
+
+# Data (will be mounted as volume)
+data/
+.kb/rest/

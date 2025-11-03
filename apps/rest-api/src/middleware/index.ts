@@ -9,6 +9,8 @@ import { registerEnvelopeMiddleware } from './envelope.js';
 import { registerRequestIdMiddleware } from './request-id.js';
 import { registerMockModeMiddleware } from './mock-mode.js';
 import { registerSecurityHeadersMiddleware } from './security-headers.js';
+import { registerCacheMiddleware } from './cache.js';
+import { registerMetricsMiddleware } from './metrics.js';
 
 /**
  * Register all middleware
@@ -20,6 +22,8 @@ export function registerMiddleware(
   registerSecurityHeadersMiddleware(server);
   registerRequestIdMiddleware(server);
   registerMockModeMiddleware(server, config);
+  registerCacheMiddleware(server);
+  registerMetricsMiddleware(server);
   registerEnvelopeMiddleware(server, config);
 }
 

@@ -12,7 +12,7 @@ import type {
   CreateAuditRunRequest,
   GetAuditSummaryResponse,
   GetAuditReportResponse,
-} from '../contracts/audit.js';
+} from '@kb-labs/api-contracts';
 
 /**
  * Audit service
@@ -85,25 +85,65 @@ export class AuditService {
     try {
       const exists = await this.storage.exists(reportPath);
       if (!exists) {
-        return {
+        // Return default in api-contracts format
+        const ts = new Date().toISOString();
+        const response: GetAuditSummaryResponse['data'] = {
+          ts,
+          totals: {
+            packages: 0,
+            ok: 0,
+            warn: 0,
+            fail: 0,
+            durationMs: 0,
+          },
+          topFailures: [],
           overall: { ok: true, severity: 'none' },
           counts: {},
+          lastRunAt: ts,
         };
+        return response;
       }
 
-      const report = await this.storage.readJson<any>(reportPath);
+      const summary = await this.storage.readJson<any>(reportPath);
       
-      return {
-        overall: report.overall || { ok: true, severity: 'none' },
-        counts: report.counts || {},
-        lastRunAt: report.finishedAt,
+      // Ensure all required fields are present (transform if needed)
+      const ts = summary.ts ?? summary.finishedAt ?? new Date().toISOString();
+      const totals = summary.totals ?? {
+        packages: summary.counts?.packages ?? summary.counts?.total ?? 0,
+        ok: summary.counts?.ok ?? summary.counts?.passed ?? 0,
+        warn: summary.counts?.warn ?? summary.counts?.warnings ?? 0,
+        fail: summary.counts?.fail ?? summary.counts?.failed ?? 0,
+        durationMs: summary.counts?.durationMs ?? 0,
       };
+      const topFailures = summary.topFailures ?? [];
+      
+      const response: GetAuditSummaryResponse['data'] = {
+        ts,
+        totals,
+        topFailures,
+        overall: summary.overall || { ok: true, severity: 'none' },
+        counts: summary.counts || {},
+        lastRunAt: summary.lastRunAt ?? ts,
+      };
+      return response;
     } catch (error) {
-      // Return default summary on error
-      return {
+      // Return default summary in api-contracts format
+      const ts = new Date().toISOString();
+      const response: GetAuditSummaryResponse['data'] = {
+        ts,
+        totals: {
+          packages: 0,
+          ok: 0,
+          warn: 0,
+          fail: 0,
+          durationMs: 0,
+        },
+        topFailures: [],
         overall: { ok: true, severity: 'none' },
         counts: {},
+        lastRunAt: ts,
       };
+      return response;
     }
   }
 

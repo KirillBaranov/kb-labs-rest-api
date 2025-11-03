@@ -7,8 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import {
   getAnalyticsSummaryResponseSchema,
-  successEnvelopeSchema,
-} from '@kb-labs/rest-api-core';
+} from '@kb-labs/api-contracts';
 import { createServices } from '../services/index.js';
 
 /**
@@ -20,7 +19,8 @@ export function registerAnalyticsRoutes(
   repoRoot: string
 ): void {
   const basePath = config.basePath;
-  const services = createServices(config, repoRoot);
+  // Reuse services from server instance (created in registerRoutes)
+  const services = server.services || createServices(config, repoRoot);
 
   // GET /analytics/summary
   server.get(`${basePath}/analytics/summary`, {

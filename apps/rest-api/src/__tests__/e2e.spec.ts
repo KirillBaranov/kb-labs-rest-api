@@ -55,10 +55,10 @@ describe('REST API E2E', () => {
     expect(body.data.status).toBe('ok');
   });
 
-  it('POST /audit/run enqueues job and returns jobId', async () => {
+  it('POST /audit/runs enqueues job and returns jobId', async () => {
     const response = await server.inject({
       method: 'POST',
-      url: `${baseUrl}/audit/run`,
+      url: `${baseUrl}/audit/runs`,
       payload: {
         scope: 'packages/*',
         strict: true,
@@ -112,7 +112,7 @@ describe('REST API E2E', () => {
     // First create a job
     const createResponse = await server.inject({
       method: 'POST',
-      url: `${baseUrl}/audit/run`,
+      url: `${baseUrl}/audit/runs`,
       payload: {},
     });
 

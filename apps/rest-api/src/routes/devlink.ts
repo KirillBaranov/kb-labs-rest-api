@@ -10,8 +10,7 @@ import {
   createDevlinkCheckResponseSchema,
   getDevlinkSummaryResponseSchema,
   getDevlinkGraphResponseSchema,
-  successEnvelopeSchema,
-} from '@kb-labs/rest-api-core';
+} from '@kb-labs/api-contracts';
 import { createServices } from '../services/index.js';
 
 /**
@@ -23,7 +22,8 @@ export function registerDevlinkRoutes(
   repoRoot: string
 ): void {
   const basePath = config.basePath;
-  const services = createServices(config, repoRoot);
+  // Reuse services from server instance (created in registerRoutes)
+  const services = server.services || createServices(config, repoRoot);
 
   // POST /devlink/check
   server.post(`${basePath}/devlink/check`, {

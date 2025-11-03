@@ -1,13 +1,18 @@
 /**
  * @module @kb-labs/rest-api-app/types/fastify
- * Fastify type extensions
+ * Fastify instance type extensions
  */
 
-import type { FastifyRequest } from 'fastify';
+import type { createServices } from '../services/index.js';
+
+type Services = ReturnType<typeof createServices>;
 
 declare module 'fastify' {
+  interface FastifyInstance {
+    services?: Services;
+  }
+  
   interface FastifyRequest {
     mockMode?: boolean;
   }
 }
-

@@ -31,7 +31,7 @@
     "// ——— core": "────────────────────────────────────────",
     "build": "pnpm -r run build",
     "build:clean": "pnpm -r run clean && pnpm -r run build",
-    "dev": "pnpm -r --parallel run dev",
+    "dev": "pnpm --filter @kb-labs/rest-api-app dev",
     "// ——— quality": "────────────────────────────────────────",
     "lint": "pnpm -r exec eslint .",
     "lint:fix": "pnpm -r exec eslint . --fix",

@@ -14,7 +14,7 @@ import type {
   CreateReleaseRunRequest,
   GetReleaseRunResponse,
   GetReleaseChangelogResponse,
-} from '../contracts/release.js';
+} from '@kb-labs/api-contracts';
 
 /**
  * Release service
@@ -60,12 +60,67 @@ export class ReleaseService {
     }
 
     // Parse JSON output
-    const preview = JSON.parse(result.stdout);
+    const preview = JSON.parse(result.stdout) as any;
 
-    return {
-      plan: preview.plan || { packages: [] },
-      changelog: preview.changelog || '',
+    // Extract range from request or use defaults
+    const range: { from: string; to: string } = {
+      from: request.fromTag || 'latest',
+      to: request.toRef || 'HEAD',
     };
+    
+    // Transform CLI output to api-contracts format
+    const plan = preview.plan || { packages: [] };
+    const changelog = preview.changelog || '';
+    
+    // Transform packages to api-contracts format
+    type PackageInput = { name?: string; type?: string; version?: string; prev?: string; current?: string; previous?: string; next?: string; breaking?: number };
+    const packages: ReleasePreviewResponse['data']['packages'] = (plan.packages || []).map((pkg: PackageInput) => {
+      // Determine bump type
+      let bump: 'major' | 'minor' | 'patch' | 'none' = 'patch';
+      if (pkg.type === 'none') {
+        bump = 'none';
+      } else if (pkg.type === 'major') {
+        bump = 'major';
+      } else if (pkg.type === 'minor') {
+        bump = 'minor';
+      } else if (pkg.type === 'patch') {
+        bump = 'patch';
+      }
+
+      return {
+        name: pkg.name ?? '',
+        prev: pkg.prev ?? pkg.current ?? pkg.previous ?? '0.0.0', // Mock: extract from git or use placeholder
+        next: pkg.version ?? pkg.next ?? '0.0.0', // Map version to next
+        bump,
+        breaking: pkg.breaking ?? 0, // Mock: analyze changelog or set to 0
+      };
+    });
+    
+    // Extract or mock markdown and manifestJson
+    const markdown = preview.markdown ?? changelog; // Use changelog as markdown if available
+    const manifestJson = preview.manifestJson ?? JSON.stringify({ packages }, null, 2); // Mock: generate from packages
+
+    // Build backward-compatible plan object
+    type Package = ReleasePreviewResponse['data']['packages'][number];
+    const backwardPlan: NonNullable<ReleasePreviewResponse['data']['plan']> = {
+      packages: packages.map((pkg: Package) => ({
+        name: pkg.name,
+        version: pkg.next,
+        type: pkg.bump === 'none' ? 'patch' as const : pkg.bump === 'major' ? 'major' as const : pkg.bump === 'minor' ? 'minor' as const : 'patch' as const,
+      })),
+    };
+
+    // Build response object with proper types
+    const response: ReleasePreviewResponse['data'] = {
+      range,
+      packages,
+      manifestJson: manifestJson || undefined,
+      markdown: markdown || undefined,
+      changelog,
+      plan: backwardPlan,
+    };
+
+    return response;
   }
 
   /**
@@ -154,12 +209,14 @@ export class ReleaseService {
       throw createError(ErrorCode.NOT_FOUND, 'No changelog found');
     }
 
+    const createdAt = new Date().toISOString();
+    
     if (format === 'json') {
       const changelog = await this.storage.readJson(changelogPath);
-      return { changelog: JSON.stringify(changelog, null, 2), format: 'json' };
+      return { changelog: JSON.stringify(changelog, null, 2), format: 'json', createdAt };
     } else {
       const changelog = await this.storage.readText(changelogPath);
-      return { changelog, format: 'markdown' };
+      return { changelog, format: 'markdown', createdAt };
     }
   }
 }

@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "zod": "^3.22.4",
+    "@kb-labs/api-contracts": "link:../../../kb-labs-api-contracts/packages/api-contracts",
     "@kb-labs/core-bundle": "link:../../../kb-labs-core/packages/bundle",
     "@kb-labs/core-config": "link:../../../kb-labs-core/packages/config",
     "@kb-labs/core-sys": "link:../../../kb-labs-core/packages/sys",

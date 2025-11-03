@@ -1,0 +1,71 @@
+version: '3.8'
+
+services:
+  rest-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kb-labs-rest-api:latest
+    container_name: kb-labs-rest-api
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - KB_REST_BASE_PATH=/api/v1
+      - KB_REST_API_VERSION=1.0.0
+      - KB_REST_QUEUE_DRIVER=memory
+      - KB_REST_STORAGE_DRIVER=fs
+      - KB_REST_CORS_PROFILE=dev
+      - KB_REST_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+      - KB_REST_QUEUE_CLEANUP_ENABLED=true
+      - KB_REST_QUEUE_CLEANUP_INTERVAL_SEC=3600
+      - KB_REST_QUEUE_CLEANUP_TTL_SEC=86400
+    volumes:
+      # Mount storage directory (for persistence across restarts)
+      - ./data:/app/.kb/rest
+      # Optional: Mount config file if exists
+      - ./kb-labs.config.json:/app/kb-labs.config.json:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/v1/health/live"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    networks:
+      - kb-labs-network
+
+  # Development service (optional, for hot reload)
+  rest-api-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    image: kb-labs-rest-api:dev
+    container_name: kb-labs-rest-api-dev
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - PORT=3001
+      - KB_REST_BASE_PATH=/api/v1
+      - KB_REST_CORS_PROFILE=dev
+    volumes:
+      # Mount source code for development
+      - ./apps/rest-api/src:/app/apps/rest-api/src:ro
+      - ./packages/rest-api-core/src:/app/packages/rest-api-core/src:ro
+      - ./data:/app/.kb/rest
+      - ./kb-labs.config.json:/app/kb-labs.config.json:ro
+    command: ["pnpm", "--filter", "@kb-labs/rest-api-app", "dev"]
+    profiles:
+      - dev
+    networks:
+      - kb-labs-network
+
+networks:
+  kb-labs-network:
+    driver: bridge
+
+volumes:
+  rest-api-data:
+    driver: local

@@ -23,6 +23,8 @@ export interface JobMetadata {
   progress?: number; // 0-100
   error?: string;
   payload: unknown;
+  retryCount?: number; // Current retry count
+  maxRetries?: number; // Maximum retries from options or config
 }
 
 /**
@@ -73,5 +75,12 @@ export interface QueuePort {
     cursor?: string;
     limit?: number;
   }): Promise<{ jobs: JobMetadata[]; cursor?: string; hasMore: boolean }>;
+
+  /**
+   * Cleanup expired jobs (optional, for TTL support)
+   * @param ttlSec - Time to live in seconds
+   * @returns Number of jobs cleaned up
+   */
+  cleanup?(ttlSec: number): Promise<number>;
 }
 

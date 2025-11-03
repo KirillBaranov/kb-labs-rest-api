@@ -48,7 +48,7 @@ describe('AuditService', () => {
       storage: { driver: 'fs', baseDir: '.kb/rest' },
       plugins: [],
       mockMode: false,
-      cors: { origins: [], allowCredentials: true },
+      cors: { origins: [], allowCredentials: true, profile: 'dev' },
     };
 
     service = new AuditService(mockCli, mockStorage, mockQueue, mockConfig, repoRoot);
@@ -128,6 +128,9 @@ describe('AuditService', () => {
       const result = await service.getSummary(true);
 
       expect(result.overall).toBeDefined();
+      expect(result.ts).toBeDefined();
+      expect(result.totals).toBeDefined();
+      expect(result.topFailures).toBeDefined();
       expect(result.counts).toBeDefined();
     });
   });

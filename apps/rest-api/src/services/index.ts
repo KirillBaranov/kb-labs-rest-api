@@ -26,6 +26,9 @@ export function createServices(config: RestApiConfig, repoRoot: string) {
   const queue = new MemoryQueueAdapter(config);
   const auth = new NoneAuthAdapter(config);
 
+  // Set CLI adapter reference in queue for cancellation support
+  (queue as any).setCliAdapter(cli);
+
   // Create services
   const audit = new AuditService(cli, storage, queue, config, repoRoot);
   const release = new ReleaseService(cli, storage, queue, config, repoRoot);

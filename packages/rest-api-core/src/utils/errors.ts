@@ -3,20 +3,32 @@
  * Error codes and factory functions
  */
 
+import { ErrorCode as ApiContractsErrorCode, type ErrorCode as ApiContractsErrorCodeType } from '@kb-labs/api-contracts';
+
 /**
- * Error codes enum
+ * Error codes enum (re-export from api-contracts for backward compatibility)
  */
 export enum ErrorCode {
-  VALIDATION_ERROR = 'VALIDATION_ERROR',
-  UNAUTHORIZED = 'UNAUTHORIZED',
-  FORBIDDEN = 'FORBIDDEN',
-  NOT_FOUND = 'NOT_FOUND',
-  CONFLICT = 'CONFLICT',
-  JOB_TIMEOUT = 'JOB_TIMEOUT',
-  AUDIT_TOOL_ERROR = 'AUDIT_TOOL_ERROR',
-  RELEASE_TOOL_ERROR = 'RELEASE_TOOL_ERROR',
-  DEVLINK_TOOL_ERROR = 'DEVLINK_TOOL_ERROR',
-  INTERNAL_ERROR = 'INTERNAL_ERROR',
+  VALIDATION_ERROR = 'E_VALIDATION',
+  UNAUTHORIZED = 'E_UNAUTHORIZED',
+  FORBIDDEN = 'E_FORBIDDEN',
+  NOT_FOUND = 'E_NOT_FOUND',
+  CONFLICT = 'E_CONFLICT',
+  RATE_LIMIT = 'E_RATE_LIMIT',
+  TIMEOUT = 'E_TIMEOUT',
+  AUDIT_TOOL_ERROR = 'E_TOOL_AUDIT',
+  RELEASE_TOOL_ERROR = 'E_TOOL_RELEASE',
+  DEVLINK_TOOL_ERROR = 'E_TOOL_DEVLINK',
+  MIND_TOOL_ERROR = 'E_TOOL_MIND',
+  ANALYTICS_TOOL_ERROR = 'E_TOOL_ANALYTICS',
+  INTERNAL_ERROR = 'E_INTERNAL',
+}
+
+/**
+ * Map ErrorCode enum to api-contracts ErrorCode
+ */
+export function mapToApiContractsErrorCode(code: ErrorCode): ApiContractsErrorCode {
+  return code as unknown as ApiContractsErrorCode;
 }
 
 /**
@@ -37,6 +49,12 @@ export function mapCliExitCodeToErrorCode(exitCode: number, command: string): Er
   if (command === 'devlink') {
     return ErrorCode.DEVLINK_TOOL_ERROR;
   }
+  if (command === 'mind') {
+    return ErrorCode.MIND_TOOL_ERROR;
+  }
+  if (command === 'analytics') {
+    return ErrorCode.ANALYTICS_TOOL_ERROR;
+  }
 
   // Generic errors
   if (exitCode === 127) {
@@ -44,7 +62,13 @@ export function mapCliExitCodeToErrorCode(exitCode: number, command: string): Er
     return ErrorCode.INTERNAL_ERROR;
   }
 
-  // Default to tool error
+  // Timeout
+  if (exitCode === 124 || exitCode === 143) {
+    // SIGTERM or timeout
+    return ErrorCode.TIMEOUT;
+  }
+
+  // Default to internal error
   return ErrorCode.INTERNAL_ERROR;
 }
 
@@ -56,6 +80,7 @@ export interface ApiError {
   message: string;
   details?: Record<string, unknown>;
   cause?: string;
+  traceId?: string;
 }
 
 /**
@@ -65,13 +90,15 @@ export function createError(
   code: ErrorCode | string,
   message: string,
   details?: Record<string, unknown>,
-  cause?: string
+  cause?: string,
+  traceId?: string
 ): ApiError {
   return {
     code,
     message,
     details,
     cause,
+    traceId,
   };
 }
 
@@ -81,12 +108,50 @@ export function createError(
 export function createValidationError(
   field: string,
   message: string,
-  value?: unknown
+  value?: unknown,
+  traceId?: string
 ): ApiError {
   return createError(
     ErrorCode.VALIDATION_ERROR,
     `Validation error: ${field} - ${message}`,
-    { field, value }
+    { field, value },
+    undefined,
+    traceId
+  );
+}
+
+/**
+ * Create timeout error
+ */
+export function createTimeoutError(
+  timeoutMs: number,
+  command: string,
+  traceId?: string
+): ApiError {
+  return createError(
+    ErrorCode.TIMEOUT,
+    `Command timeout after ${timeoutMs}ms: ${command}`,
+    { timeoutMs, command },
+    `Execution exceeded timeout of ${timeoutMs}ms`,
+    traceId
+  );
+}
+
+/**
+ * Create not found error
+ */
+export function createNotFoundError(
+  resource: string,
+  id?: string,
+  traceId?: string
+): ApiError {
+  const message = id ? `${resource} not found: ${id}` : `${resource} not found`;
+  return createError(
+    ErrorCode.NOT_FOUND,
+    message,
+    { resource, id },
+    undefined,
+    traceId
   );
 }
 

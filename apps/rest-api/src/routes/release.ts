@@ -12,8 +12,7 @@ import {
   createReleaseRunResponseSchema,
   getReleaseRunResponseSchema,
   getReleaseChangelogResponseSchema,
-  successEnvelopeSchema,
-} from '@kb-labs/rest-api-core';
+} from '@kb-labs/api-contracts';
 import { createServices } from '../services/index.js';
 
 /**
@@ -25,7 +24,8 @@ export function registerReleaseRoutes(
   repoRoot: string
 ): void {
   const basePath = config.basePath;
-  const services = createServices(config, repoRoot);
+  // Reuse services from server instance (created in registerRoutes)
+  const services = server.services || createServices(config, repoRoot);
 
   // POST /release/preview
   server.post(`${basePath}/release/preview`, {
@@ -44,8 +44,8 @@ export function registerReleaseRoutes(
     return result;
   });
 
-  // POST /release/run
-  server.post(`${basePath}/release/run`, {
+  // POST /release/runs
+  server.post(`${basePath}/release/runs`, {
     schema: {
       body: { type: 'object' },
       response: {
