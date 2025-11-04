@@ -84,6 +84,18 @@ importers:
       '@kb-labs/core-sys':
         specifier: link:../../../kb-labs-core/packages/sys
         version: link:../../../kb-labs-core/packages/sys
+      '@kb-labs/plugin-adapter-rest':
+        specifier: link:../../../kb-labs-core/packages/plugin-adapter-rest
+        version: link:../../../kb-labs-core/packages/plugin-adapter-rest
+      '@kb-labs/plugin-devtools':
+        specifier: link:../../../kb-labs-core/packages/plugin-devtools
+        version: link:../../../kb-labs-core/packages/plugin-devtools
+      '@kb-labs/plugin-manifest':
+        specifier: link:../../../kb-labs-core/packages/plugin-manifest
+        version: link:../../../kb-labs-core/packages/plugin-manifest
+      '@kb-labs/plugin-runtime':
+        specifier: link:../../../kb-labs-core/packages/plugin-runtime
+        version: link:../../../kb-labs-core/packages/plugin-runtime
       '@kb-labs/rest-api-core':
         specifier: workspace:*
         version: link:../../packages/rest-api-core
