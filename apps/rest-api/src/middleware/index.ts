@@ -11,6 +11,7 @@ import { registerMockModeMiddleware } from './mock-mode.js';
 import { registerSecurityHeadersMiddleware } from './security-headers.js';
 import { registerCacheMiddleware } from './cache.js';
 import { registerMetricsMiddleware } from './metrics.js';
+import { registerErrorGuard } from './error-guard.js';
 
 /**
  * Register all middleware
@@ -25,5 +26,8 @@ export function registerMiddleware(
   registerCacheMiddleware(server);
   registerMetricsMiddleware(server);
   registerEnvelopeMiddleware(server, config);
+  
+  // Global error guard for plugin routes (must be last)
+  registerErrorGuard(server);
 }
 
