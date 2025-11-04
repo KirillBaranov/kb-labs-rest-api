@@ -8,6 +8,7 @@ import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import type { CliAPI } from '@kb-labs/cli-api';
 import { registerRoutes } from './routes/index.js';
 import { registerPlugins } from './plugins/index.js';
 import { registerMiddleware } from './middleware/index.js';
@@ -19,7 +20,8 @@ import { createServices } from './services/index.js';
  */
 export async function createServer(
   config: RestApiConfig,
-  repoRoot: string
+  repoRoot: string,
+  cliApi: CliAPI
 ): Promise<FastifyInstance> {
   const server = Fastify({
     logger: {
@@ -35,6 +37,9 @@ export async function createServer(
     bodyLimit: config.timeouts?.bodyLimit || 10485760, // 10MB
   });
 
+  // Store cliApi in server instance
+  (server as any).cliApi = cliApi;
+
   // Register plugins
   await registerPlugins(server, config);
 
@@ -42,7 +47,7 @@ export async function createServer(
   registerMiddleware(server, config);
 
   // Register routes
-  await registerRoutes(server, config, repoRoot);
+  await registerRoutes(server, config, repoRoot, cliApi);
 
   // Start background tasks
   const services = (server as any).services || createServices(config, repoRoot);
