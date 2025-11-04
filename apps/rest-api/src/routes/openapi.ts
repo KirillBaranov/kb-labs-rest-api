@@ -1,203 +1,94 @@
 /**
  * @module @kb-labs/rest-api-app/routes/openapi
- * OpenAPI schema endpoint
+ * OpenAPI specification endpoints
  */
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { generateOpenApiSpec, zodToOpenApiSchema } from '@kb-labs/rest-api-core';
-import {
-  createAuditRunRequestSchema,
-  getAuditSummaryResponseSchema,
-  releasePreviewRequestSchema,
-  jobResponseSchema,
-  healthResponseSchema,
-} from '@kb-labs/api-contracts';
+import type { CliAPI } from '@kb-labs/cli-api';
+import { mergeOpenAPISpecs } from '@kb-labs/cli-core';
 
 /**
  * Register OpenAPI routes
  */
-export function registerOpenApiRoutes(
-  server: FastifyInstance,
-  config: RestApiConfig
-): void {
-  // GET /openapi.json
-  server.get(`${config.basePath}/openapi.json`, {
+export async function registerOpenAPIRoutes(
+  fastify: FastifyInstance,
+  config: RestApiConfig,
+  repoRoot: string,
+  cliApi: CliAPI
+) {
+  // Merged OpenAPI spec from all plugins
+  fastify.get('/openapi.json', {
     schema: {
       response: {
         200: {
           type: 'object',
+          additionalProperties: true,
         },
       },
     },
-  }, async () => {
-    const spec = generateOpenApiSpec({
-      title: 'KB Labs REST API',
-      version: config.apiVersion,
-      basePath: config.basePath,
-    });
-
-    // Add example endpoints and schemas
-    spec.paths = {
-      [`${config.basePath}/health/live`]: {
-        get: {
-          tags: ['System'],
-          summary: 'Health check',
-          description: 'Check if the API is alive',
-          responses: {
-            '200': {
-              description: 'API is healthy',
-              content: {
-                'application/json': {
-                  schema: zodToOpenApiSchema(healthResponseSchema.shape.data),
-                },
-              },
-            },
-          },
-        },
+    config: {
+      rateLimit: {
+        max: 10, // 10 requests
+        timeWindow: '1 minute',
       },
-      [`${config.basePath}/audit/summary`]: {
-        get: {
-          tags: ['Audit'],
-          summary: 'Get audit summary',
-          description: 'Get aggregated audit summary',
-          responses: {
-            '200': {
-              description: 'Audit summary',
-              content: {
-                'application/json': {
-                  schema: zodToOpenApiSchema(getAuditSummaryResponseSchema.shape.data),
-                },
-              },
-            },
-          },
+    },
+  }, async (_, reply) => {
+    try {
+      const plugins = await cliApi.listPlugins();
+      const specs = [];
+      
+      for (const plugin of plugins) {
+        const spec = await cliApi.getOpenAPISpec(plugin.id);
+        if (spec) {
+          specs.push(spec);
+        }
+      }
+      
+      const merged = mergeOpenAPISpecs(specs);
+      
+      // Add caching headers (1 hour)
+      reply.header('Cache-Control', 'public, max-age=3600');
+      reply.header('ETag', `"${cliApi.snapshot().version}"`);
+      
+      reply.send(merged);
+    } catch (error) {
+      reply.code(500).send({
+        ok: false,
+        error: {
+          code: 'OPENAPI_GENERATION_FAILED',
+          message: error instanceof Error ? error.message : String(error),
         },
-      },
-      [`${config.basePath}/audit/runs`]: {
-        post: {
-          tags: ['Audit'],
-          summary: 'Create audit run',
-          description: 'Create a new audit run job',
-          requestBody: {
-            required: true,
-            content: {
-              'application/json': {
-                schema: zodToOpenApiSchema(createAuditRunRequestSchema),
-              },
-            },
-          },
-          responses: {
-            '202': {
-              description: 'Audit run created',
-              content: {
-                'application/json': {
-                  schema: zodToOpenApiSchema(jobResponseSchema.shape.data),
-                },
-              },
-            },
-          },
-        },
-      },
-      [`${config.basePath}/jobs/{jobId}`]: {
-        get: {
-          tags: ['Jobs'],
-          summary: 'Get job status',
-          description: 'Get status of a job by ID',
-          parameters: [
-            {
-              name: 'jobId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string' },
-              description: 'Job ID',
-            },
-          ],
-          responses: {
-            '200': {
-              description: 'Job status',
-              content: {
-                'application/json': {
-                  schema: zodToOpenApiSchema(jobResponseSchema.shape.data),
-                },
-              },
-            },
-            '404': {
-              description: 'Job not found',
-            },
-          },
-        },
-      },
-      [`${config.basePath}/jobs/{jobId}/events`]: {
-        get: {
-          tags: ['Jobs'],
-          summary: 'Subscribe to job events (SSE)',
-          description: 'Stream job events via Server-Sent Events',
-          parameters: [
-            {
-              name: 'jobId',
-              in: 'path',
-              required: true,
-              schema: { type: 'string' },
-              description: 'Job ID',
-            },
-          ],
-          responses: {
-            '200': {
-              description: 'Event stream',
-              content: {
-                'text/event-stream': {
-                  schema: {
-                    type: 'string',
-                    description: 'SSE stream of job events',
-                  },
-                },
-              },
-            },
-          },
-        },
-      },
-    };
-
-    return spec;
+      });
+    }
   });
 
-  // Swagger UI endpoint (dev only)
-  if (process.env.NODE_ENV === 'development') {
-    server.get(`${config.basePath}/docs`, {
-      schema: {
-        response: {
-          200: {
-            type: 'string',
+  // Per-plugin OpenAPI spec
+  fastify.get('/openapi/:pluginId', async (req, reply) => {
+    try {
+      const { pluginId } = req.params as { pluginId: string };
+      const spec = await cliApi.getOpenAPISpec(pluginId);
+      
+      if (!spec) {
+        reply.code(404).send({
+          ok: false,
+          error: {
+            code: 'PLUGIN_NOT_FOUND',
+            message: `Plugin ${pluginId} not found`,
           },
-        },
-      },
-    }, async () => {
-      // Basic Swagger UI HTML
-      const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <title>KB Labs REST API - Swagger UI</title>
-  <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css" />
-</head>
-<body>
-  <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js"></script>
-  <script>
-    SwaggerUIBundle({
-      url: '${config.basePath}/openapi.json',
-      dom_id: '#swagger-ui',
-      presets: [
-        SwaggerUIBundle.presets.apis,
-        SwaggerUIBundle.presets.standalone
-      ]
-    });
-  </script>
-</body>
-</html>
-      `;
-      return html;
-    });
-  }
-}
+        });
+        return;
+      }
 
+      reply.send(spec);
+    } catch (error) {
+      reply.code(500).send({
+        ok: false,
+        error: {
+          code: 'OPENAPI_GENERATION_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
+  });
+}
