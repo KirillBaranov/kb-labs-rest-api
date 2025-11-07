@@ -4,7 +4,8 @@
  */
 
 import type { ManifestV2 } from '@kb-labs/plugin-manifest';
-import { createCliAPI, type CliAPI } from '@kb-labs/cli-api';
+import type { CliAPI } from '@kb-labs/cli-api';
+import * as path from 'node:path';
 
 /**
  * Plugin manifest with path information from CLI
@@ -50,20 +51,32 @@ export async function discoverPluginsViaCli(
     // Get plugins
     const plugins = await api.listPlugins();
     console.log(`[DEBUG] CLI API discovery: found ${plugins.length} plugins`);
+    if (plugins.length > 0) {
+      console.log(`[DEBUG] CLI API discovery plugin IDs: ${plugins.map(p => `${p.id}@${p.version} (${p.kind})`).join(', ')}`);
+    }
     
     // Get manifests
     const v2Manifests: ManifestV2[] = [];
     const manifestsWithPaths: PluginManifestWithPath[] = [];
     
     for (const plugin of plugins) {
+      console.log(`[DEBUG] CLI API discovery: getting manifest for plugin ${plugin.id}...`);
       const manifest = await api.getManifestV2(plugin.id);
       if (manifest) {
+        console.log(`[DEBUG] CLI API discovery: found manifest for ${plugin.id}, manifest.id=${manifest.id}`);
         v2Manifests.push(manifest);
+        // plugin.source.path is the path to the manifest file
+        // pluginRoot should be the directory containing the manifest
+        const manifestPath = plugin.source.path;
+        const pluginRoot = path.dirname(manifestPath);
+        
         manifestsWithPaths.push({
           manifest,
-          manifestPath: plugin.source.path,
-          pluginRoot: plugin.source.path, // TODO: Calculate proper plugin root
+          manifestPath,
+          pluginRoot,
         });
+      } else {
+        console.log(`[DEBUG] CLI API discovery: manifest not found for plugin ${plugin.id}`);
       }
     }
     

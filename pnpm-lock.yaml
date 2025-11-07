@@ -81,23 +81,29 @@ importers:
       '@kb-labs/api-contracts':
         specifier: link:../../../kb-labs-api-contracts/packages/api-contracts
         version: link:../../../kb-labs-api-contracts/packages/api-contracts
+      '@kb-labs/cli-api':
+        specifier: link:../../../kb-labs-cli/packages/cli-api
+        version: link:../../../kb-labs-cli/packages/cli-api
+      '@kb-labs/cli-core':
+        specifier: link:../../../kb-labs-cli/packages/core
+        version: link:../../../kb-labs-cli/packages/core
       '@kb-labs/core-sys':
         specifier: link:../../../kb-labs-core/packages/sys
         version: link:../../../kb-labs-core/packages/sys
       '@kb-labs/plugin-adapter-rest':
-        specifier: link:../../../kb-labs-core/packages/plugin-adapter-rest
-        version: link:../../../kb-labs-core/packages/plugin-adapter-rest
+        specifier: link:../../../kb-labs-plugin/packages/adapters/rest
+        version: link:../../../kb-labs-plugin/packages/adapters/rest
       '@kb-labs/plugin-devtools':
-        specifier: link:../../../kb-labs-core/packages/plugin-devtools
-        version: link:../../../kb-labs-core/packages/plugin-devtools
+        specifier: link:../../../kb-labs-plugin/packages/devtools
+        version: link:../../../kb-labs-plugin/packages/devtools
       '@kb-labs/plugin-manifest':
-        specifier: link:../../../kb-labs-core/packages/plugin-manifest
-        version: link:../../../kb-labs-core/packages/plugin-manifest
+        specifier: link:../../../kb-labs-plugin/packages/manifest
+        version: link:../../../kb-labs-plugin/packages/manifest
       '@kb-labs/plugin-runtime':
-        specifier: link:../../../kb-labs-core/packages/plugin-runtime
-        version: link:../../../kb-labs-core/packages/plugin-runtime
+        specifier: link:../../../kb-labs-plugin/packages/runtime
+        version: link:../../../kb-labs-plugin/packages/runtime
       '@kb-labs/rest-api-core':
-        specifier: workspace:*
+        specifier: link:../../packages/rest-api-core
         version: link:../../packages/rest-api-core
       execa:
         specifier: ^8.0.1

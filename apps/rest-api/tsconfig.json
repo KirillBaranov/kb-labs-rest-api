@@ -4,7 +4,11 @@
     "src"
   ],
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "moduleResolution": "node",
+    "module": "ESNext",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true
   }
 }
 

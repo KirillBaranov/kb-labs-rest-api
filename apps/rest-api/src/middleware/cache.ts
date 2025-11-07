@@ -3,7 +3,7 @@
  * Cache middleware for ETag/Last-Modified support
  */
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import { createHash } from 'crypto';
 
 /**
@@ -19,7 +19,7 @@ export function generateETag(content: string | Buffer | object): string {
  * Register cache middleware
  */
 export function registerCacheMiddleware(server: FastifyInstance): void {
-  server.addHook('onSend', async (request: FastifyRequest, reply: FastifyReply, payload: unknown) => {
+  server.addHook('onSend', async (request, reply, payload) => {
     // Only cache successful GET requests
     if (request.method !== 'GET' || reply.statusCode >= 300) {
       return payload;

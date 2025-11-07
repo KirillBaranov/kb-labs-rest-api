@@ -3,7 +3,7 @@
  * Metrics collection middleware
  */
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 
 /**
  * Metrics data
@@ -25,12 +25,6 @@ interface Metrics {
   errors: {
     total: number;
     byCode: Record<string, number>;
-  };
-  jobs: {
-    queued: number;
-    running: number;
-    completed: number;
-    failed: number;
   };
   timestamps: {
     startTime: number;
@@ -59,12 +53,6 @@ class MetricsCollector {
     errors: {
       total: 0,
       byCode: {},
-    },
-    jobs: {
-      queued: 0,
-      running: 0,
-      completed: 0,
-      failed: 0,
     },
     timestamps: {
       startTime: Date.now(),
@@ -115,13 +103,6 @@ class MetricsCollector {
   }
 
   /**
-   * Update job metrics
-   */
-  updateJobMetrics(jobs: { queued: number; running: number; completed: number; failed: number }): void {
-    this.metrics.jobs = { ...jobs };
-  }
-
-  /**
    * Get current metrics
    */
   getMetrics(): Metrics {
@@ -158,12 +139,6 @@ class MetricsCollector {
         total: 0,
         byCode: {},
       },
-      jobs: {
-        queued: 0,
-        running: 0,
-        completed: 0,
-        failed: 0,
-      },
       timestamps: {
         startTime: Date.now(),
         lastRequest: 0,
@@ -182,7 +157,7 @@ export const metricsCollector = new MetricsCollector();
  */
 export function registerMetricsMiddleware(server: FastifyInstance): void {
   // Record request metrics
-  server.addHook('onResponse', async (request: FastifyRequest, reply: FastifyReply) => {
+  server.addHook('onResponse', async (request, reply) => {
     const method = request.method;
     const route = request.url;
     const statusCode = reply.statusCode || 500;
@@ -196,23 +171,5 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
       metricsCollector.recordError(errorCode);
     }
   });
-
-  // Update job metrics periodically (if queue adapter supports getStats)
-  setInterval(async () => {
-    try {
-      const services = (server as any).services;
-      if (services?.queue && typeof services.queue.getStats === 'function') {
-        const stats = services.queue.getStats();
-        metricsCollector.updateJobMetrics({
-          queued: stats.queued,
-          running: stats.running,
-          completed: stats.completed,
-          failed: stats.failed,
-        });
-      }
-    } catch (error) {
-      // Ignore errors
-    }
-  }, 5000); // Update every 5 seconds
 }
 

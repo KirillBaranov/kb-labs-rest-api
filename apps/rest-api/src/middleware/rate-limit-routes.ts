@@ -3,7 +3,7 @@
  * Per-route rate limiting middleware
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 
 /**
@@ -41,10 +41,10 @@ export function registerRouteRateLimiting(
   }
 
   // Apply route-specific limits
-  for (const [route, limit] of Object.entries(routeLimits)) {
+  for (const [route] of Object.entries(routeLimits)) {
     const fullPath = `${config.basePath}${route}`;
     
-    server.addHook('onRequest', async (request, reply) => {
+    server.addHook('onRequest', async (request, _reply) => {
       // Check if this route matches
       if (!request.url.startsWith(fullPath)) {
         return;
@@ -58,7 +58,7 @@ export function registerRouteRateLimiting(
   }
 
   // Apply stricter limits for POST requests to run endpoints
-  server.addHook('onRequest', async (request, reply) => {
+  server.addHook('onRequest', async (request, _reply) => {
     const isRunEndpoint = request.url.includes('/audit/runs') || 
                           request.url.includes('/release/runs') ||
                           request.url.includes('/devlink/check');

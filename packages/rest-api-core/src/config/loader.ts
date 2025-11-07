@@ -25,7 +25,7 @@ export async function loadRestApiConfig(
       profileKey: 'default',
     });
     bundleConfig = bundle.config;
-  } catch (error) {
+  } catch {
     // If bundle loading fails (product not registered), try direct config loading
     const { path: configPath } = await findNearestConfig({
       startDir: cwd,
@@ -40,77 +40,103 @@ export async function loadRestApiConfig(
     }
   }
   
-  // Default configuration
   const defaults: RestApiConfig = {
     port: 5050,
     basePath: '/api/v1',
     apiVersion: '1.0.0',
-    auth: {
-      mode: 'none',
-      apiKeyHeader: 'X-API-Key',
-      roles: ['viewer', 'operator', 'admin'],
-    },
-    queue: {
-      driver: 'memory',
-      maxConcurrent: {
-        audit: 2,
-        release: 1,
-        devlink: 2,
-      },
-      defaultPriority: 0,
-      cleanup: {
-        enabled: true,
-        intervalSec: 3600, // 1 hour
-        ttlSec: 86400, // 24 hours
-        cleanupArtifacts: true,
-      },
-    },
-    cli: {
-      bin: 'pnpm',
-      prefix: ['kb'],
-      timeoutSec: 900,
-      allowedCommands: ['audit', 'release', 'devlink', 'mind', 'analytics'],
-    },
-    storage: {
-      driver: 'fs',
-      baseDir: '.kb/rest',
-    },
-    plugins: [],
-    mockMode: false,
     cors: {
-      origins: ['http://localhost:3000'],
+      origins: ['http://localhost:3000', 'http://localhost:5173'],
       allowCredentials: true,
       profile: 'dev',
     },
+    timeouts: {
+      requestTimeout: 30000,
+      bodyLimit: 10_485_760,
+    },
+    rateLimit: {
+      max: 60,
+      timeWindow: '1 minute',
+    },
+    plugins: [],
+    mockMode: false,
   };
-  
-  // Environment mapper: KB_REST_* env vars
+
   const envMapper = (env: NodeJS.ProcessEnv): Partial<RestApiConfig> => {
     const overrides: Partial<RestApiConfig> = {};
-    
+
     if (env.KB_REST_PORT) {
-      overrides.port = parseInt(env.KB_REST_PORT, 10);
+      const parsedPort = Number.parseInt(env.KB_REST_PORT, 10);
+      if (!Number.isNaN(parsedPort)) {
+        overrides.port = parsedPort;
+      }
     }
+
     if (env.KB_REST_BASE_PATH) {
       overrides.basePath = env.KB_REST_BASE_PATH;
     }
-    if (env.KB_REST_AUTH_MODE) {
-      overrides.auth = { 
-        ...defaults.auth, 
-        mode: env.KB_REST_AUTH_MODE as any,
-        apiKeyHeader: defaults.auth.apiKeyHeader || 'X-API-Key',
+
+    if (env.KB_REST_API_VERSION) {
+      overrides.apiVersion = env.KB_REST_API_VERSION;
+    }
+
+    if (env.KB_REST_CORS_ORIGINS) {
+      const origins = env.KB_REST_CORS_ORIGINS.split(',').map(origin => origin.trim()).filter(Boolean);
+      overrides.cors = {
+        ...(overrides.cors ?? defaults.cors),
+        origins,
       };
     }
-    if (env.KB_REST_QUEUE_DRIVER) {
-      overrides.queue = { ...defaults.queue, driver: env.KB_REST_QUEUE_DRIVER as any };
+
+    if (env.KB_REST_CORS_PROFILE) {
+      overrides.cors = {
+        ...(overrides.cors ?? defaults.cors),
+        profile: env.KB_REST_CORS_PROFILE as RestApiConfig['cors']['profile'],
+      };
     }
-    if (env.KB_REST_STORAGE_DRIVER) {
-      overrides.storage = { ...defaults.storage, driver: env.KB_REST_STORAGE_DRIVER as any };
-    }
+
     if (env.KB_REST_MOCK_MODE === 'true' || env.KB_REST_MOCK_MODE === '1') {
       overrides.mockMode = true;
     }
-    
+
+    if (env.KB_REST_RATE_LIMIT_MAX) {
+      const parsedMax = Number.parseInt(env.KB_REST_RATE_LIMIT_MAX, 10);
+      if (!Number.isNaN(parsedMax)) {
+        overrides.rateLimit = {
+          ...(overrides.rateLimit ?? defaults.rateLimit ?? { max: 60, timeWindow: '1 minute' }),
+          max: parsedMax,
+        };
+      }
+    }
+
+    if (env.KB_REST_RATE_LIMIT_WINDOW) {
+      overrides.rateLimit = {
+        ...(overrides.rateLimit ?? defaults.rateLimit ?? { max: 60, timeWindow: '1 minute' }),
+        timeWindow: env.KB_REST_RATE_LIMIT_WINDOW,
+      };
+    }
+
+    if (env.KB_REST_REQUEST_TIMEOUT) {
+      const parsedTimeout = Number.parseInt(env.KB_REST_REQUEST_TIMEOUT, 10);
+      if (!Number.isNaN(parsedTimeout)) {
+        const baseTimeout = overrides.timeouts ?? defaults.timeouts;
+        overrides.timeouts = {
+          requestTimeout: parsedTimeout,
+          bodyLimit: baseTimeout?.bodyLimit ?? defaults.timeouts?.bodyLimit ?? 10_485_760,
+        };
+      }
+    }
+
+    if (env.KB_REST_BODY_LIMIT) {
+      const parsedBodyLimit = Number.parseInt(env.KB_REST_BODY_LIMIT, 10);
+      if (!Number.isNaN(parsedBodyLimit)) {
+        const baseTimeout = overrides.timeouts ?? defaults.timeouts;
+        overrides.timeouts = {
+          requestTimeout: baseTimeout?.requestTimeout ?? defaults.timeouts?.requestTimeout ?? 30000,
+          bodyLimit: parsedBodyLimit,
+        };
+      }
+    }
+
     return overrides;
   };
   

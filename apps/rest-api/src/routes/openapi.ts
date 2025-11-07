@@ -3,7 +3,7 @@
  * OpenAPI specification endpoints
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import { mergeOpenAPISpecs } from '@kb-labs/cli-core';

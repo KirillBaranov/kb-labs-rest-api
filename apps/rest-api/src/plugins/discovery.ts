@@ -71,7 +71,7 @@ export async function discoverPlugins(
           }
         }
       }
-    } catch (e) {
+    } catch {
       // Ignore package.json errors
     }
   }
@@ -146,7 +146,7 @@ async function loadPlugin(
     }
 
     return null;
-  } catch (e) {
+  } catch {
     return null;
   }
 }

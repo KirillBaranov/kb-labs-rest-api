@@ -1,6 +1,6 @@
 # KB Labs REST API (@kb-labs/rest-api)
 
-> **REST API layer for KB Labs CLI tools.** Unified HTTP interface for audit, release, devlink, mind, and analytics commands.
+> **Plugin-first REST API gateway for KB Labs.** Serves health, registry, OpenAPI, and metrics endpoints powered entirely by discovered plugins.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-18.18.0+-green.svg)](https://nodejs.org/)
@@ -8,7 +8,9 @@
 
 ## 🎯 Vision
 
-KB Labs REST API provides a production-ready HTTP layer over KB Labs CLI tools, enabling web applications and other services to interact with the KB Labs ecosystem through a unified REST interface. It bridges the gap between CLI tools and web-based UIs, making all KB Labs functionality accessible via HTTP.
+KB Labs REST API now exposes a thin HTTP layer that reflects the capabilities of discovered plugins. Instead of hard-coded audit or release flows, the server discovers manifests at runtime, mounts their REST handlers, and presents shared system endpoints (health, plugin registry, OpenAPI, metrics) that Studio and other clients can consume.
+
+This keeps the API aligned with the plugin ecosystem, removes legacy surface area, and keeps the deployment lightweight—no background job queue, no bespoke services, just plugin-powered routes plus common infrastructure middleware.
 
 The project solves the problem of integrating CLI tools into web applications by providing a secure, scalable, and type-safe REST API layer. It enables real-time job execution, status tracking, and integration with modern web frameworks while maintaining security through enhanced sandboxing and validation.
 
@@ -50,11 +52,9 @@ KB_REST_API_VERSION=1.0.0
 KB_REST_CORS_ORIGINS=http://localhost:3000,http://localhost:5173
 KB_REST_CORS_PROFILE=dev  # dev | preview | prod
 
-# Queue configuration
-KB_REST_QUEUE_DRIVER=memory  # memory | bullmq
-
-# Storage configuration
-KB_REST_STORAGE_DRIVER=fs  # fs | s3
+# Rate limit configuration
+KB_REST_RATE_LIMIT_MAX=60
+KB_REST_RATE_LIMIT_WINDOW=1 minute
 
 # Mock mode (for testing)
 KB_REST_MOCK_MODE=false
@@ -65,33 +65,34 @@ KB_REST_MOCK_MODE=false
 #### Health Check
 
 ```bash
-curl http://localhost:3001/api/v1/health/live
+curl http://localhost:3001/health
 ```
 
-#### Create Audit Run
+#### Plugin Registry
 
 ```bash
-curl -X POST http://localhost:3001/api/v1/audit/runs \
-  -H "Content-Type: application/json" \
-  -d '{"scope": "packages/*"}'
+curl http://localhost:3001/api/v1/plugins/registry
 ```
 
-#### Get Job Status
+#### Aggregated OpenAPI
 
 ```bash
-curl http://localhost:3001/api/v1/jobs/{jobId}
+curl http://localhost:3001/openapi.json
+```
+
+#### Prometheus Metrics
+
+```bash
+curl http://localhost:3001/api/v1/metrics
 ```
 
 ## ✨ Features
 
-- **Unified API**: Single REST interface for all CLI tools (audit, release, devlink, mind, analytics)
-- **Job Queue**: Asynchronous task execution with status tracking and retry policies
-- **Real-time Updates**: SSE (Server-Sent Events) for job progress monitoring
-- **Type Safety**: Shared contracts via `@kb-labs/api-contracts` with Zod schema validation
-- **Production Ready**: Security headers, CORS, rate limiting, caching, comprehensive error handling
-- **Idempotency**: Support for `Idempotency-Key` header for consistent results
-- **Mock Mode**: Per-request or global mock mode for testing
-- **Observability**: Structured logging, metrics, and request tracing
+- **Plugin-powered routing**: Mounts REST handlers straight from discovered plugin manifests (no hard-coded routes)
+- **Studio-ready registry**: Exposes full manifest metadata for Studio and other clients via `/api/v1/plugins/registry`
+- **Shared infrastructure**: CORS profiles, rate limiting, security headers, request envelope, and metrics baked in
+- **OpenAPI aggregation**: Merges OpenAPI fragments emitted by plugins into a single `/openapi.json`
+- **Mock & diagnostics**: Per-request mock flag plus health/ready/live and debug endpoints for quick troubleshooting
 
 ## 📁 Repository Structure
 
@@ -114,29 +115,27 @@ kb-labs-rest-api/
 
 - **`apps/rest-api/`** - Fastify-based REST API server application
 - **`apps/demo/`** - Demo application demonstrating API usage
-- **`packages/rest-api-core/`** - Core library with ports, adapters, and services
+- **`packages/rest-api-core/`** - Shared config loader, schema, and types for the REST API runtime
 - **`docs/`** - Comprehensive documentation including ADRs, guides, and examples
 
 ## 📦 Packages
 
 | Package | Description |
 |---------|-------------|
-| [@kb-labs/rest-api-core](./packages/rest-api-core/) | Core library with ports (interfaces), adapters (implementations), and services (business logic) |
+| [@kb-labs/rest-api-core](./packages/rest-api-core/) | Configuration loader and shared types for the REST API runtime |
 | [@kb-labs/rest-api-app](./apps/rest-api/) | Fastify application server |
 
 ### Package Details
 
-**@kb-labs/rest-api-core** provides the core library architecture:
-- **Ports**: Interfaces (CLI, Storage, Queue, Auth)
-- **Adapters**: Implementations (ExecaCliAdapter, FsStorageAdapter, MemoryQueueAdapter)
-- **Services**: Business logic (AuditService, ReleaseService, DevLinkService, MindService, AnalyticsService)
-- **Contracts**: Request/response validation via Zod schemas
+**@kb-labs/rest-api-core** provides:
+- Zod schema + loader for REST API configuration
+- Environment variable mapping helpers for deployments
 
 **@kb-labs/rest-api-app** provides the Fastify application:
-- Route handlers for all API endpoints
-- Middleware (security, caching, rate limiting, metrics)
+- Plugin discovery + dynamic route mounting
+- Middleware (security, caching, rate limiting, metrics, envelope)
 - Server bootstrap and configuration
-- OpenAPI documentation generation
+- OpenAPI aggregation
 
 ## 🛠️ Available Scripts
 
@@ -182,8 +181,10 @@ The REST API server can be configured via environment variables:
 - **KB_REST_API_VERSION**: API version (default: `1.0.0`)
 - **KB_REST_CORS_ORIGINS**: Comma-separated list of allowed CORS origins
 - **KB_REST_CORS_PROFILE**: CORS profile (dev | preview | prod)
-- **KB_REST_QUEUE_DRIVER**: Queue driver (memory | bullmq)
-- **KB_REST_STORAGE_DRIVER**: Storage driver (fs | s3)
+- **KB_REST_RATE_LIMIT_MAX**: Requests allowed per window (default: 60)
+- **KB_REST_RATE_LIMIT_WINDOW**: Rate-limit window (default: `1 minute`)
+- **KB_REST_REQUEST_TIMEOUT**: Per-request timeout milliseconds (default: 30000)
+- **KB_REST_BODY_LIMIT**: Maximum request body size in bytes (default: 10485760)
 - **KB_REST_MOCK_MODE**: Enable mock mode globally (true | false)
 
 ### Job Queue Configuration
@@ -216,9 +217,10 @@ Configure retry policies and cleanup in `kb-labs.config.json`:
 
 ### Base URL
 
-- **Development**: `http://localhost:3001/api/v1`
-- **OpenAPI Spec**: `http://localhost:3001/api/v1/openapi.json`
-- **Swagger UI** (dev only): `http://localhost:3001/api/v1/docs`
+- **HTTP host**: `http://localhost:3001`
+- **API base path**: `/api/v1`
+- **Aggregated OpenAPI**: `http://localhost:3001/openapi.json`
+- **Per-plugin OpenAPI**: `http://localhost:3001/openapi/{pluginId}`
 
 ### Response Format
 
@@ -242,10 +244,9 @@ All responses use an envelope format:
 {
   "ok": false,
   "error": {
-    "code": "E_TOOL_AUDIT",
-    "message": "Audit failed",
+    "code": "PLUGIN_HANDLER_ERROR",
+    "message": "Plugin route failed",
     "details": { /* error details */ },
-    "cause": "CLI exit code: 1",
     "traceId": "01K..."
   },
   "meta": {
@@ -258,87 +259,47 @@ All responses use an envelope format:
 
 ### Key Endpoints
 
-#### System
+#### Health & Diagnostics
 
-- `GET /health/live` — Health check (always returns 200)
-- `GET /health/ready` — Readiness check (200 if ready, 503 if not)
-- `GET /info` — System information
-- `GET /info/capabilities` — Available adapters and commands
-- `GET /info/config` — Redacted configuration
+- `GET /health` — Process health details
+- `GET /ready` — Readiness probe (returns 503 if no plugins are available)
+- `GET /live` — Liveness probe
+- `GET /health/plugins` — List discovered plugins
+- `GET /debug/registry/snapshot` — Raw CLI registry snapshot
+- `GET /debug/plugins/:id/explain` — Explain why a plugin was (not) selected
 
-#### Audit
+#### Plugin Registry & Discovery
 
-- `POST /audit/runs` — Create audit run (returns `jobId` and `runId`)
-- `GET /audit/runs` — List audit runs (cursor pagination)
-- `GET /audit/runs/:runId` — Get audit run status
-- `GET /audit/summary` — Get audit summary
-- `GET /audit/report/latest` — Get latest audit report
+- `GET /api/v1/plugins/registry` — Complete list of plugin manifests the API mounted
 
-#### Jobs
+#### OpenAPI
 
-- `GET /jobs/:jobId` — Get job status
-- `GET /jobs/:jobId/logs` — Get job logs
-- `GET /jobs/:jobId/events` — Subscribe to job events (SSE)
-- `POST /jobs/:jobId/cancel` — Cancel a running job
+- `GET /openapi.json` — Aggregated OpenAPI document combining all mounted plugins
+- `GET /openapi/{pluginId}` — Per-plugin OpenAPI fragment
 
-#### Release
+#### Metrics
 
-- `POST /release/preview` — Preview release plan
-- `POST /release/runs` — Create release run
-- `GET /release/runs/:runId` — Get release run status
-- `GET /release/changelog` — Get changelog
+- `GET /api/v1/metrics` — Prometheus format metrics
+- `GET /api/v1/metrics/json` — JSON formatted metrics snapshot
 
-### Advanced Features
+#### Plugin Routes
 
-#### Idempotency
-
-Support `Idempotency-Key` header to ensure consistent results:
-
-```bash
-curl -X POST http://localhost:3001/api/v1/audit/runs \
-  -H "Idempotency-Key: my-unique-key" \
-  -H "Content-Type: application/json" \
-  -d '{"scope": "packages/*"}'
-```
-
-#### Server-Sent Events (SSE)
-
-Subscribe to job events in real-time:
-
-```bash
-curl -N http://localhost:3001/api/v1/jobs/{jobId}/events
-```
-
-#### Caching
-
-API supports ETag and Last-Modified headers:
-
-```bash
-curl -H "If-None-Match: \"abc123\"" \
-  http://localhost:3001/api/v1/audit/report/latest
-```
+Each plugin contributes its own REST handlers and base path via its manifest. Inspect `/api/v1/plugins/registry` for manifest metadata and mounted routes.
 
 ## 🔒 Security
 
 - **Security Headers**: HSTS, X-Frame-Options, X-Content-Type-Options, etc.
 - **CORS**: Configurable profiles (dev, preview, prod)
 - **Rate Limiting**: Per-IP and per-route limits
-- **Enhanced CLI Sandboxing**:
-  - Command whitelist validation
-  - Argument sanitization (prevents injection attacks)
-  - CWD restrictions (within repo root)
-  - Path traversal protection
-  - Environment variable blocklist (PATH, LD_*, etc.)
-  - Command binary validation
 - **Input Validation**: Zod schema validation for all requests
 
 ## 📊 Observability
 
 - **Structured Logging**: Pino logger with correlation IDs
 - **Request ID**: `X-Request-Id` header for request tracking
-- **Metrics**: Request, latency, error, and job metrics
-  - `GET /metrics` — Prometheus format
-  - `GET /metrics/json` — JSON format
+- **Metrics**: Request, latency, and error counters
+  - `GET /api/v1/metrics` — Prometheus format
+  - `GET /api/v1/metrics/json` — JSON format
 - **Error Tracking**: Full error envelope with traceId
 
 ## 📚 Documentation

@@ -3,7 +3,7 @@
  * Metrics endpoint
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { metricsCollector } from '../middleware/metrics.js';
 
@@ -23,7 +23,7 @@ export function registerMetricsRoutes(
         200: { type: 'object' },
       },
     },
-  }, async (request, reply) => {
+  }, async (_request, reply) => {
     const metrics = metricsCollector.getMetrics();
 
     // Prometheus format
@@ -63,14 +63,6 @@ export function registerMetricsRoutes(
       prometheusLines.push(`http_errors_total{code="${code}"} ${count}`);
     }
 
-    // Job metrics
-    prometheusLines.push(`# HELP job_queue_size Current number of jobs in queue`);
-    prometheusLines.push(`# TYPE job_queue_size gauge`);
-    prometheusLines.push(`job_queue_size{status="queued"} ${metrics.jobs.queued}`);
-    prometheusLines.push(`job_queue_size{status="running"} ${metrics.jobs.running}`);
-    prometheusLines.push(`job_queue_size{status="completed"} ${metrics.jobs.completed}`);
-    prometheusLines.push(`job_queue_size{status="failed"} ${metrics.jobs.failed}`);
-
     // Uptime
     const uptime = (Date.now() - metrics.timestamps.startTime) / 1000;
     prometheusLines.push(`# HELP process_uptime_seconds Process uptime in seconds`);
@@ -88,7 +80,7 @@ export function registerMetricsRoutes(
         200: { type: 'object' },
       },
     },
-  }, async (request, reply) => {
+  }, async (_request, _reply) => {
     const metrics = metricsCollector.getMetrics();
     
     // Return only data - envelope middleware will wrap it

@@ -3,14 +3,20 @@
  * Mock mode middleware (per-request)
  */
 
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import type { IncomingHttpHeaders } from 'http';
+
+type MockableRequest = {
+  headers: IncomingHttpHeaders;
+  mockMode?: boolean;
+};
 
 /**
  * Check if mock mode should be enabled for this request
  */
 export function isMockModeEnabled(
-  request: FastifyRequest,
+  request: MockableRequest,
   config: RestApiConfig
 ): boolean {
   // Check per-request header
@@ -30,9 +36,9 @@ export function registerMockModeMiddleware(
   server: FastifyInstance,
   config: RestApiConfig
 ): void {
-  server.addHook('onRequest', async (request: FastifyRequest) => {
-    // Attach mock mode flag to request
-    request.mockMode = isMockModeEnabled(request, config);
+  server.addHook('onRequest', async (request) => {
+    const mockableRequest = request as MockableRequest;
+    mockableRequest.mockMode = isMockModeEnabled(mockableRequest, config);
   });
 }
 

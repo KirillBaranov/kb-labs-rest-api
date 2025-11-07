@@ -6,7 +6,7 @@
 import { loadRestApiConfig } from '@kb-labs/rest-api-core';
 import { createServer } from './server.js';
 import { findRepoRoot } from '@kb-labs/core-sys';
-import { createCliAPI, type CliAPI } from '@kb-labs/cli-api';
+import { createCliAPI } from '@kb-labs/cli-api';
 import { setCliApi, disposeCliApi } from './plugins/cli-discovery.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
@@ -138,11 +138,6 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     
     // Dispose CLI API
     await disposeCliApi();
-    
-    // Stop cleanup task
-    if ((server as any).stopCleanup) {
-      (server as any).stopCleanup();
-    }
     
     // Close server
     await server.close();

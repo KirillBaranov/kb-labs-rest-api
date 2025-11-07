@@ -4,16 +4,12 @@
  */
 
 import Fastify from 'fastify';
-import cors from '@fastify/cors';
-import rateLimit from '@fastify/rate-limit';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import { registerRoutes } from './routes/index.js';
 import { registerPlugins } from './plugins/index.js';
 import { registerMiddleware } from './middleware/index.js';
-import { startCleanupTask } from './tasks/cleanup.js';
-import { createServices } from './services/index.js';
 
 /**
  * Create and configure Fastify server
@@ -48,20 +44,6 @@ export async function createServer(
 
   // Register routes
   await registerRoutes(server, config, repoRoot, cliApi);
-
-  // Start background tasks
-  const services = (server as any).services || createServices(config, repoRoot);
-  
-  // Start cleanup task
-  const stopCleanup = startCleanupTask({
-    queue: services.queue,
-    storage: services.storage,
-    config,
-    repoRoot,
-  });
-
-  // Store cleanup stop function for graceful shutdown
-  (server as any).stopCleanup = stopCleanup;
 
   return server;
 }

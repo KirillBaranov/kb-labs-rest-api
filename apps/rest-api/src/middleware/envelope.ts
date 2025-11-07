@@ -3,10 +3,9 @@
  * Response envelope wrapper middleware
  */
 
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { errorEnvelopeSchema } from '@kb-labs/api-contracts';
-import type { Stream } from 'stream';
 
 /**
  * Register envelope middleware
@@ -18,7 +17,7 @@ export function registerEnvelopeMiddleware(
   // Add response schema version header and wrap in envelope
   // Use 'onSend' hook to modify payload after Fastify serializes it but before sending
   // This ensures we get the serialized JSON string and can wrap it properly
-  server.addHook('onSend', async (request: FastifyRequest, reply: FastifyReply, payload: string | Buffer | Stream) => {
+  server.addHook('onSend', async (request, reply, payload) => {
     reply.header('x-schema-version', config.apiVersion);
     
     // Skip envelope wrapping for streaming responses
@@ -37,7 +36,7 @@ export function registerEnvelopeMiddleware(
     let parsedPayload: unknown;
     try {
       parsedPayload = JSON.parse(payload);
-    } catch (error) {
+    } catch {
       // If not JSON, return as is
       console.log('⚠️ [envelope-middleware] Payload is not JSON, returning as is');
       return payload;
@@ -110,7 +109,7 @@ export function registerEnvelopeMiddleware(
   });
 
   // Error handler
-  server.setErrorHandler(async (error, request: FastifyRequest, reply: FastifyReply) => {
+  server.setErrorHandler(async (error, request, reply) => {
     const statusCode = error.statusCode || 500;
     
     // Extract error details

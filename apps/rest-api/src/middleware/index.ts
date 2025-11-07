@@ -3,7 +3,7 @@
  * Middleware registration
  */
 
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance } from 'fastify/types/instance';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerEnvelopeMiddleware } from './envelope.js';
 import { registerRequestIdMiddleware } from './request-id.js';
