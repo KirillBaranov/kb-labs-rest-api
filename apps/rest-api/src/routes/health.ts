@@ -3,117 +3,314 @@
  * Health check and diagnostics endpoints
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import { createRequire } from 'node:module';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
+import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
+import type { ReadinessState } from './readiness.js';
+import { isReady, resolveReadinessReason } from './readiness.js';
+import type { PluginsMetricsSnapshot } from '../middleware/metrics.js';
+import { metricsCollector } from '../middleware/metrics.js';
+
+const require = createRequire(import.meta.url);
+
+const pkgJson = require('../../package.json') as { version?: string };
+const REST_VERSION = pkgJson?.version ?? '0.0.0';
+
+const CACHE_WINDOW_MS = 200;
+const READY_SCHEMA = 'kb.ready/1';
+
+interface CachedSnapshot {
+  base: SystemHealthSnapshot;
+  expiresAt: number;
+}
+
+let cachedBaseSnapshot: CachedSnapshot | null = null;
+let inFlightBaseSnapshot: Promise<SystemHealthSnapshot> | null = null;
 
 /**
- * Register health and diagnostics routes
+ * Register health and readiness routes
  */
 export async function registerHealthRoutes(
   fastify: FastifyInstance,
   config: RestApiConfig,
-  repoRoot: string,
-  cliApi: CliAPI
-) {
+  _repoRoot: string,
+  cliApi: CliAPI,
+  readiness: ReadinessState
+): Promise<void> {
+  const basePath = normalizeBasePath(config.basePath);
+  const healthPaths = resolvePaths(basePath, '/health');
+  const readyPaths = resolvePaths(basePath, '/ready');
 
-  // Detailed health check
-  fastify.get('/health', async (_, reply) => {
-    const snapshot = cliApi.snapshot();
-    
-    reply.send({
-      status: 'healthy',
-      version: process.env.npm_package_version || '1.0.0',
-      uptime: process.uptime(),
-      timestamp: Date.now(),
-      registry: {
-        version: snapshot.version,
-        pluginsCount: snapshot.plugins.length,
-        lastRefresh: snapshot.ts,
-      },
-      system: {
-        memory: process.memoryUsage(),
-        nodeVersion: process.version,
-        platform: process.platform,
-      },
+  for (const path of healthPaths) {
+    fastify.get(path, async (_request, reply) => {
+      const eventHub = fastify.kbEventHub;
+      try {
+        const baseSnapshot = await getBaseSnapshot(cliApi);
+        const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(cliApi);
+        readiness.registryLoaded = registryLoaded;
+        readiness.registryPartial = registryPartial;
+        readiness.registryStale = registryStale;
+        const ready = isReady(readiness);
+        const reason = resolveReadinessReason(readiness);
+        const pluginsMetrics = metricsCollector.getLastPluginMountSnapshot();
+        const response = augmentSnapshot(baseSnapshot, readiness, pluginsMetrics);
+        eventHub?.publish({
+          type: 'health',
+          status: response.status,
+          ts: response.ts,
+          ready,
+          reason,
+          registryPartial: readiness.registryPartial,
+          registryStale: readiness.registryStale,
+          registryLoaded: readiness.registryLoaded,
+        });
+        reply.send(response);
+      } catch (error) {
+        const fallback = buildFallbackSnapshot(error, readiness);
+        const ready = isReady(readiness);
+        const reason = resolveReadinessReason(readiness);
+        eventHub?.publish({
+          type: 'health',
+          status: fallback.status,
+          ts: fallback.ts,
+          ready,
+          reason,
+          registryPartial: readiness.registryPartial,
+          registryStale: readiness.registryStale,
+          registryLoaded: readiness.registryLoaded,
+        });
+        reply.send(fallback);
+      }
     });
-  });
+  }
 
-  // Readiness probe (K8s)
-  fastify.get('/ready', async (_, reply) => {
-    const plugins = await cliApi.listPlugins();
-    
-    if (plugins.length === 0) {
-      reply.code(503).send({ ready: false, reason: 'No plugins discovered' });
-      return;
-    }
-    
-    reply.send({ ready: true, pluginsCount: plugins.length });
-  });
+  for (const path of readyPaths) {
+    fastify.get(path, async (_request, reply) => {
+      const eventHub = fastify.kbEventHub;
+      const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(cliApi);
+      readiness.registryLoaded = registryLoaded;
+      readiness.registryPartial = registryPartial;
+      readiness.registryStale = registryStale;
 
-  // Liveness probe (K8s)
-  fastify.get('/live', async (_, reply) => {
-    reply.send({ live: true });
-  });
+      const response = buildReadinessResponse(readiness);
+      const statusCode = response.ready ? 200 : 503;
+      reply.code(statusCode).send(response);
 
-  // Health check - plugins
-  fastify.get('/health/plugins', async (_, reply) => {
-    try {
-      const plugins = await cliApi.listPlugins();
-      
-      reply.send({
-        ok: true,
-        version: '1.0.0',
-        pluginsCount: plugins.length,
-        timestamp: Date.now(),
-        plugins: plugins.map(p => ({
-          id: p.id,
-          version: p.version,
-        })),
+      eventHub?.publish({
+        type: 'health',
+        status: response.ready ? 'healthy' : 'degraded',
+        ts: new Date().toISOString(),
+        ready: response.ready,
+        reason: response.reason,
+        registryPartial: readiness.registryPartial,
+        registryStale: readiness.registryStale,
+        registryLoaded: readiness.registryLoaded,
+        pluginMountInProgress: readiness.pluginMountInProgress,
+        pluginRoutesMounted: readiness.pluginRoutesMounted,
+        lastPluginMountTs: readiness.lastPluginMountTs,
+        pluginRoutesLastDurationMs: readiness.pluginRoutesLastDurationMs,
+        pluginsMounted: metricsCollector.getLastPluginMountSnapshot()?.succeeded ?? 0,
+        pluginsFailed: metricsCollector.getLastPluginMountSnapshot()?.failed ?? 0,
       });
-    } catch (error) {
-      reply.code(500).send({
-        ok: false,
-        error: {
-          code: 'HEALTH_CHECK_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
+    });
+  }
+}
+
+async function getBaseSnapshot(cliApi: CliAPI): Promise<SystemHealthSnapshot> {
+  const now = Date.now();
+  if (cachedBaseSnapshot && now < cachedBaseSnapshot.expiresAt) {
+    return cachedBaseSnapshot.base;
+  }
+
+  if (inFlightBaseSnapshot) {
+    return inFlightBaseSnapshot;
+  }
+
+  inFlightBaseSnapshot = cliApi
+    .getSystemHealth({
+      uptimeSec: process.uptime(),
+      version: { rest: REST_VERSION },
+    })
+    .then(snapshot => {
+      cachedBaseSnapshot = {
+        base: snapshot,
+        expiresAt: Date.now() + CACHE_WINDOW_MS,
+      };
+      inFlightBaseSnapshot = null;
+      return snapshot;
+    })
+    .catch(error => {
+      inFlightBaseSnapshot = null;
+      throw error;
+    });
+
+  return inFlightBaseSnapshot;
+}
+
+function augmentSnapshot(
+  base: SystemHealthSnapshot,
+  readiness: ReadinessState,
+  pluginsMetrics?: PluginsMetricsSnapshot | null
+): SystemHealthSnapshot {
+  const snapshot = cloneSnapshot(base);
+  const failures = new Map(readiness.pluginRouteFailures.map(f => [f.id, f.error]));
+
+  const components = snapshot.components.map(component => {
+    const failure = failures.get(component.id);
+    return failure
+      ? {
+          ...component,
+          lastError: failure,
+        }
+      : component;
   });
 
-  // Diagnostics - explain plugin selection
-  fastify.get('/debug/plugins/:id/explain', async (req, reply) => {
-    try {
-      const { id } = req.params as { id: string };
-      const explanation = cliApi.explain(id);
-      
-      reply.send(explanation);
-    } catch (error) {
-      reply.code(500).send({
-        ok: false,
-        error: {
-          code: 'EXPLAIN_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  });
+  const readinessMeta = {
+    pluginRoutesMounted: readiness.pluginRoutesMounted,
+    pluginMountInProgress: readiness.pluginMountInProgress,
+    pluginRoutesCount: readiness.pluginRoutesCount,
+    pluginRouteErrors: readiness.pluginRouteErrors,
+    pluginRouteFailures: readiness.pluginRouteFailures,
+    registryPartial: readiness.registryPartial,
+    registryStale: readiness.registryStale,
+    pluginMounts: pluginsMetrics ?? null,
+    lastPluginMountTs: readiness.lastPluginMountTs ?? null,
+    pluginRoutesLastDurationMs: readiness.pluginRoutesLastDurationMs ?? null,
+    redisEnabled: readiness.redisEnabled,
+    redisConnected: readiness.redisConnected,
+    redisStates: readiness.redisStates,
+  };
 
-  // Registry snapshot
-  fastify.get('/debug/registry/snapshot', async (_, reply) => {
-    try {
-      const snapshot = cliApi.snapshot();
-      
-      reply.send(snapshot);
-    } catch (error) {
-      reply.code(500).send({
-        ok: false,
-        error: {
-          code: 'SNAPSHOT_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        },
-      });
-    }
-  });
+  const meta: Record<string, unknown> = {
+    source: 'rest',
+    ...(snapshot.meta || {}),
+    readiness: readinessMeta,
+  };
+
+  if (readiness.pluginRouteFailures.length > 0) {
+    meta.readinessFailures = readiness.pluginRouteFailures;
+  }
+
+  const hasReadinessErrors = readiness.pluginRouteErrors > 0 || readiness.pluginRouteFailures.length > 0;
+
+  return {
+    ...snapshot,
+    status: hasReadinessErrors ? 'degraded' : snapshot.status,
+    components,
+    meta,
+  };
+}
+
+function buildFallbackSnapshot(
+  error: unknown,
+  readiness: ReadinessState
+): SystemHealthSnapshot {
+  const message = sanitizeError(error);
+  const now = new Date();
+
+  const snapshot: SystemHealthSnapshot = {
+    schema: 'kb.health/1',
+    ts: now.toISOString(),
+    uptimeSec: Math.max(0, Math.floor(process.uptime())),
+    version: {
+      kbLabs: process.env.KB_LABS_VERSION || process.env.KB_VERSION || 'unknown',
+      cli: process.env.KB_CLI_VERSION || 'unknown',
+      rest: REST_VERSION,
+    },
+    registry: {
+      total: 0,
+      withRest: 0,
+      withStudio: 0,
+      errors: 1,
+      generatedAt: new Date(0).toISOString(),
+      expiresAt: undefined,
+      partial: true,
+      stale: true,
+    },
+    status: 'degraded',
+    components: [],
+    meta: {
+      source: 'rest',
+      error: message,
+    },
+  };
+
+  return augmentSnapshot(snapshot, readiness, metricsCollector.getLastPluginMountSnapshot());
+}
+
+function cloneSnapshot(base: SystemHealthSnapshot): SystemHealthSnapshot {
+  return {
+    schema: base.schema,
+    ts: base.ts,
+    uptimeSec: base.uptimeSec,
+    version: { ...base.version },
+    registry: { ...base.registry },
+    status: base.status,
+    components: base.components.map(component => ({ ...component })),
+    ...(base.meta ? { meta: { ...base.meta } } : {}),
+  };
+}
+
+function sanitizeError(error: unknown): string {
+  if (!error) {
+    return 'unknown_error';
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const firstLine = message.trim().split('\n')[0] ?? message.trim();
+  return firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine;
+}
+
+function evaluateRegistryState(cliApi: CliAPI): {
+  registryLoaded: boolean;
+  registryPartial: boolean;
+  registryStale: boolean;
+} {
+  const snapshot = cliApi.snapshot();
+  return {
+    registryLoaded: snapshot.plugins.length > 0 && !snapshot.partial && !snapshot.stale,
+    registryPartial: snapshot.partial,
+    registryStale: snapshot.stale,
+  };
+}
+
+function buildReadinessResponse(readiness: ReadinessState) {
+  const ready = isReady(readiness);
+  const pluginIssues =
+    readiness.pluginRouteErrors > 0 || readiness.pluginRouteFailures.length > 0;
+  const status = ready ? (pluginIssues ? 'degraded' : 'ready') : 'initializing';
+  const reason = ready ? 'ready' : resolveReadinessReason(readiness);
+
+  return {
+    schema: READY_SCHEMA,
+    ts: new Date().toISOString(),
+    ready,
+    status,
+    reason,
+    components: {
+      cliApi: {
+        initialized: readiness.cliApiInitialized,
+      },
+      registry: {
+        loaded: readiness.registryLoaded,
+        partial: readiness.registryPartial,
+        stale: readiness.registryStale,
+      },
+      plugins: {
+        mounted: readiness.pluginRoutesMounted,
+        inProgress: readiness.pluginMountInProgress,
+        routeCount: readiness.pluginRoutesCount,
+        errors: readiness.pluginRouteErrors,
+        failures: readiness.pluginRouteFailures,
+        lastCompletedAt: readiness.lastPluginMountTs ?? null,
+        lastDurationMs: readiness.pluginRoutesLastDurationMs ?? null,
+      },
+      redis: {
+        enabled: readiness.redisEnabled,
+        healthy: readiness.redisConnected,
+        states: readiness.redisStates,
+      },
+    },
+  };
 }

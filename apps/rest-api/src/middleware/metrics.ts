@@ -1,9 +1,10 @@
+import { performance } from 'node:perf_hooks';
+import type { FastifyInstance } from 'fastify';
+
 /**
  * @module @kb-labs/rest-api-app/middleware/metrics
  * Metrics collection middleware
  */
-
-import type { FastifyInstance } from 'fastify/types/instance';
 
 /**
  * Metrics data
@@ -21,6 +22,7 @@ interface Metrics {
     min: number;
     max: number;
     average: number;
+    histogram: Map<string, RouteLatencyStats>;
   };
   errors: {
     total: number;
@@ -30,98 +32,158 @@ interface Metrics {
     startTime: number;
     lastRequest: number;
   };
+  headers: {
+    filteredInbound: number;
+    filteredOutbound: number;
+    sensitiveInbound: number;
+    validationErrors: number;
+    varyApplied: number;
+    dryRunDecisions: number;
+    byPlugin: Record<string, HeaderPluginMetrics>;
+  };
 }
 
-/**
- * Metrics singleton
- */
-class MetricsCollector {
-  private metrics: Metrics = {
-    requests: {
-      total: 0,
-      byMethod: {},
-      byStatus: {},
-      byRoute: {},
-    },
-    latency: {
-      total: 0,
-      count: 0,
-      min: Infinity,
-      max: 0,
-      average: 0,
-    },
-    errors: {
-      total: 0,
-      byCode: {},
-    },
-    timestamps: {
-      startTime: Date.now(),
-      lastRequest: 0,
-    },
-  };
+type RouteLatencyStats = {
+  count: number;
+  total: number;
+  max: number;
+  byStatus: Record<string, number>;
+};
 
-  /**
-   * Record request
-   */
-  recordRequest(method: string, route: string, statusCode: number, durationMs: number): void {
-    this.metrics.requests.total++;
-    
-    // Count by method
-    this.metrics.requests.byMethod[method] = (this.metrics.requests.byMethod[method] || 0) + 1;
-    
-    // Count by status
-    const statusGroup = `${Math.floor(statusCode / 100)}xx`;
-    this.metrics.requests.byStatus[statusGroup] = (this.metrics.requests.byStatus[statusGroup] || 0) + 1;
-    
-    // Count by route (normalized)
-    if (route) {
-      const routePath = route.split('?')[0];
-      if (routePath) {
-        const normalizedRoute = routePath.replace(/\/\d+/g, '/:id');
-        const currentRouteCount = this.metrics.requests.byRoute[normalizedRoute] || 0;
-        this.metrics.requests.byRoute[normalizedRoute] = currentRouteCount + 1;
-      }
-    }
-    
-    // Update latency stats
-    this.metrics.latency.count++;
-    this.metrics.latency.total += durationMs;
-    this.metrics.latency.min = Math.min(this.metrics.latency.min, durationMs);
-    this.metrics.latency.max = Math.max(this.metrics.latency.max, durationMs);
-    this.metrics.latency.average = this.metrics.latency.total / this.metrics.latency.count;
-    
-    // Update last request timestamp
-    this.metrics.timestamps.lastRequest = Date.now();
-  }
+type HeaderPluginMetrics = {
+  filteredInbound: number;
+  filteredOutbound: number;
+  validationErrors: number;
+  varyApplied: number;
+  sensitiveInbound: number;
+};
 
-  /**
-   * Record error
-   */
-  recordError(errorCode: string): void {
-    this.metrics.errors.total++;
-    this.metrics.errors.byCode[errorCode] = (this.metrics.errors.byCode[errorCode] || 0) + 1;
-  }
+type HeaderMetricsEntry = {
+  pluginId?: string;
+  routeId?: string;
+  filteredInbound: number;
+  filteredOutbound: number;
+  sensitiveInbound: number;
+  validationErrors: number;
+  varyApplied: number;
+  dryRun: boolean;
+};
 
-  /**
-   * Get current metrics
-   */
-  getMetrics(): Metrics {
+export type PluginsMetricsSnapshot = {
+  total: number;
+  succeeded: number;
+  failed: number;
+  elapsedMs: number;
+};
+
+type PluginsMetricsDetails = Record<string, {
+  routes: number;
+  status: 'ok' | 'failed';
+  durationMs: number;
+  lastError?: string;
+}>;
+
+class PluginsMetricsCollector {
+  private metrics: PluginsMetricsSnapshot & { details: PluginsMetricsDetails } = this.createDefault();
+
+  private createDefault(): PluginsMetricsSnapshot & { details: PluginsMetricsDetails } {
     return {
-      ...this.metrics,
-      latency: {
-        ...this.metrics.latency,
-        average: this.metrics.latency.count > 0 
-          ? this.metrics.latency.total / this.metrics.latency.count 
-          : 0,
-      },
+      total: 0,
+      succeeded: 0,
+      failed: 0,
+      elapsedMs: 0,
+      details: {},
     };
   }
 
-  /**
-   * Reset metrics (for testing)
-   */
   reset(): void {
-    this.metrics = {
+    this.metrics = this.createDefault();
+  }
+
+  recordSuccess(pluginId: string, routes: number, durationMs: number): void {
+    this.metrics.total += 1;
+    this.metrics.succeeded += 1;
+    this.metrics.elapsedMs += durationMs;
+    this.metrics.details[pluginId] = {
+      routes,
+      status: 'ok',
+      durationMs,
+    };
+  }
+
+  recordFailure(pluginId: string, error: string): void {
+    this.metrics.total += 1;
+    this.metrics.failed += 1;
+    this.metrics.details[pluginId] = {
+      routes: 0,
+      status: 'failed',
+      durationMs: 0,
+      lastError: error,
+    };
+  }
+
+  getSnapshot(): PluginsMetricsSnapshot {
+    return {
+      total: this.metrics.total,
+      succeeded: this.metrics.succeeded,
+      failed: this.metrics.failed,
+      elapsedMs: Number(this.metrics.elapsedMs.toFixed(2)),
+    };
+  }
+
+  getDetails(): PluginsMetricsDetails {
+    return this.metrics.details;
+  }
+}
+
+interface MetricsSnapshot {
+  requests: Metrics['requests'];
+  latency: Omit<Metrics['latency'], 'histogram'> & {
+    histogram: Array<{
+      route: string;
+      count: number;
+      total: number;
+      max: number;
+      byStatus: Record<string, number>;
+      budgetMs: number | null;
+      pluginId?: string;
+    }>;
+  };
+  perPlugin: Array<{
+    pluginId?: string;
+    total: number;
+    totalDuration: number;
+    maxDuration: number;
+    statuses: Record<string, number>;
+  }>;
+  errors: Metrics['errors'];
+  timestamps: Metrics['timestamps'];
+  headers: {
+    filteredInbound: number;
+    filteredOutbound: number;
+    sensitiveInbound: number;
+    validationErrors: number;
+    varyApplied: number;
+    dryRunDecisions: number;
+    perPlugin: Array<{
+      pluginId: string;
+      filteredInbound: number;
+      filteredOutbound: number;
+      validationErrors: number;
+      varyApplied: number;
+      sensitiveInbound: number;
+    }>;
+  };
+}
+
+class MetricsCollector {
+  private metrics: Metrics = this.createMetrics();
+  private pluginsMetrics = new PluginsMetricsCollector();
+  private lastPluginSnapshot: PluginsMetricsSnapshot | null = null;
+  private pluginRouteBudgets = new Map<string, { budgetMs: number | null; pluginId?: string }>();
+
+  private createMetrics(): Metrics {
+    return {
       requests: {
         total: 0,
         byMethod: {},
@@ -134,6 +196,7 @@ class MetricsCollector {
         min: Infinity,
         max: 0,
         average: 0,
+        histogram: new Map<string, RouteLatencyStats>(),
       },
       errors: {
         total: 0,
@@ -143,33 +206,263 @@ class MetricsCollector {
         startTime: Date.now(),
         lastRequest: 0,
       },
+      headers: {
+        filteredInbound: 0,
+        filteredOutbound: 0,
+        sensitiveInbound: 0,
+        validationErrors: 0,
+        varyApplied: 0,
+        dryRunDecisions: 0,
+        byPlugin: {},
+      },
     };
+  }
+
+  recordRequest(method: string, route: string, statusCode: number, durationMs: number): void {
+    this.metrics.requests.total++;
+    this.metrics.requests.byMethod[method] = (this.metrics.requests.byMethod[method] || 0) + 1;
+    const statusGroup = `${Math.floor(statusCode / 100)}xx`;
+    this.metrics.requests.byStatus[statusGroup] = (this.metrics.requests.byStatus[statusGroup] || 0) + 1;
+
+    const normalizedRoute = normalizeRoute(route);
+    if (normalizedRoute) {
+      const routeBucket = `${method} ${normalizedRoute}`;
+      this.metrics.requests.byRoute[routeBucket] = (this.metrics.requests.byRoute[routeBucket] || 0) + 1;
+      updateLatencyHistogram(this.metrics.latency.histogram, routeBucket, durationMs, statusCode);
+    }
+
+    this.metrics.latency.count++;
+    this.metrics.latency.total += durationMs;
+    this.metrics.latency.min = Math.min(this.metrics.latency.min, durationMs);
+    this.metrics.latency.max = Math.max(this.metrics.latency.max, durationMs);
+    this.metrics.latency.average = this.metrics.latency.total / this.metrics.latency.count;
+    this.metrics.timestamps.lastRequest = Date.now();
+  }
+
+  recordError(errorCode: string): void {
+    this.metrics.errors.total++;
+    this.metrics.errors.byCode[errorCode] = (this.metrics.errors.byCode[errorCode] || 0) + 1;
+  }
+
+  recordHeaderMetrics(entry: HeaderMetricsEntry): void {
+    const headers = this.metrics.headers;
+    headers.filteredInbound += Math.max(0, entry.filteredInbound);
+    headers.filteredOutbound += Math.max(0, entry.filteredOutbound);
+    headers.sensitiveInbound += Math.max(0, entry.sensitiveInbound);
+    headers.validationErrors += Math.max(0, entry.validationErrors);
+    headers.varyApplied += Math.max(0, entry.varyApplied);
+    if (entry.dryRun) {
+      headers.dryRunDecisions += Math.max(
+        0,
+        entry.filteredInbound + entry.filteredOutbound + entry.validationErrors
+      );
+    }
+
+    if (entry.pluginId) {
+      const existing: HeaderPluginMetrics = headers.byPlugin[entry.pluginId] ?? {
+        filteredInbound: 0,
+        filteredOutbound: 0,
+        validationErrors: 0,
+        varyApplied: 0,
+        sensitiveInbound: 0,
+      };
+      existing.filteredInbound += Math.max(0, entry.filteredInbound);
+      existing.filteredOutbound += Math.max(0, entry.filteredOutbound);
+      existing.validationErrors += Math.max(0, entry.validationErrors);
+      existing.varyApplied += Math.max(0, entry.varyApplied);
+      existing.sensitiveInbound += Math.max(0, entry.sensitiveInbound);
+      headers.byPlugin[entry.pluginId] = existing;
+    }
+  }
+
+  getMetrics(): MetricsSnapshot {
+    const avg = this.metrics.latency.count > 0
+      ? this.metrics.latency.total / this.metrics.latency.count
+      : 0;
+
+    const perPluginMap = new Map<string, {
+      pluginId?: string;
+      total: number;
+      totalDuration: number;
+      maxDuration: number;
+      statuses: Record<string, number>;
+    }>();
+
+    const histogramArray = Array.from(this.metrics.latency.histogram.entries()).map(([route, stats]) => {
+      const entry = this.pluginRouteBudgets.get(route);
+      const pluginId = entry?.pluginId;
+      if (pluginId) {
+        let aggregate = perPluginMap.get(pluginId);
+        if (!aggregate) {
+          aggregate = {
+            pluginId,
+            total: 0,
+            totalDuration: 0,
+            maxDuration: 0,
+            statuses: {},
+          };
+          perPluginMap.set(pluginId, aggregate);
+        }
+        aggregate.total += stats.count;
+        aggregate.totalDuration += stats.total;
+        aggregate.maxDuration = Math.max(aggregate.maxDuration, stats.max);
+        for (const [statusCode, count] of Object.entries(stats.byStatus)) {
+          aggregate.statuses[statusCode] = (aggregate.statuses[statusCode] || 0) + count;
+        }
+      }
+
+      return {
+        route,
+        count: stats.count,
+        total: stats.total,
+        max: stats.max,
+        byStatus: { ...stats.byStatus },
+        budgetMs: entry?.budgetMs ?? null,
+        pluginId,
+      };
+    });
+
+    const headerPerPlugin = Object.entries(this.metrics.headers.byPlugin).map(([pluginId, data]) => ({
+      pluginId,
+      filteredInbound: data.filteredInbound,
+      filteredOutbound: data.filteredOutbound,
+      validationErrors: data.validationErrors,
+      varyApplied: data.varyApplied,
+      sensitiveInbound: data.sensitiveInbound,
+    }));
+
+    return {
+      requests: { ...this.metrics.requests },
+      latency: {
+        total: this.metrics.latency.total,
+        count: this.metrics.latency.count,
+        min: this.metrics.latency.min,
+        max: this.metrics.latency.max,
+        average: avg,
+        histogram: histogramArray,
+      },
+      perPlugin: Array.from(perPluginMap.values()),
+      errors: { ...this.metrics.errors, byCode: { ...this.metrics.errors.byCode } },
+      timestamps: { ...this.metrics.timestamps },
+      headers: {
+        filteredInbound: this.metrics.headers.filteredInbound,
+        filteredOutbound: this.metrics.headers.filteredOutbound,
+        sensitiveInbound: this.metrics.headers.sensitiveInbound,
+        validationErrors: this.metrics.headers.validationErrors,
+        varyApplied: this.metrics.headers.varyApplied,
+        dryRunDecisions: this.metrics.headers.dryRunDecisions,
+        perPlugin: headerPerPlugin,
+      },
+    };
+  }
+
+  reset(): void {
+    this.metrics = this.createMetrics();
+    this.pluginsMetrics.reset();
+    this.lastPluginSnapshot = null;
+  }
+
+  beginPluginMount(): PluginsMetricsCollector {
+    this.pluginsMetrics.reset();
+    return this.pluginsMetrics;
+  }
+
+  completePluginMount(logger: { info: (...args: any[]) => void; warn: (...args: any[]) => void }): PluginsMetricsSnapshot | null {
+    const snapshot = this.pluginsMetrics.getSnapshot();
+    this.lastPluginSnapshot = snapshot;
+    if (snapshot.total === 0) {
+      return snapshot;
+    }
+
+    logger.info('Plugin mount metrics', snapshot);
+    if (snapshot.failed > 0) {
+      logger.warn('Plugin mount failures', this.pluginsMetrics.getDetails());
+    }
+
+    this.pluginsMetrics.reset();
+    return snapshot;
+  }
+
+  getLastPluginMountSnapshot(): PluginsMetricsSnapshot | null {
+    return this.lastPluginSnapshot;
+  }
+
+  registerRouteBudget(
+    method: string,
+    routePath: string,
+    budgetMs: number | null | undefined,
+    pluginId?: string
+  ): void {
+    const normalized = normalizeRoute(routePath);
+    if (!normalized) {
+      return;
+    }
+    const bucket = `${method.toUpperCase()} ${normalized}`;
+    this.pluginRouteBudgets.set(bucket, { budgetMs: budgetMs ?? null, pluginId });
+  }
+
+  resetPluginRouteBudgets(): void {
+    this.pluginRouteBudgets.clear();
+  }
+
+  getRouteBudget(method: string, routePath: string): number | null {
+    const normalized = normalizeRoute(routePath);
+    if (!normalized) {
+      return null;
+    }
+    const bucket = `${method.toUpperCase()} ${normalized}`;
+    const entry = this.pluginRouteBudgets.get(bucket);
+    return entry ? entry.budgetMs ?? null : null;
   }
 }
 
-/**
- * Global metrics collector instance
- */
 export const metricsCollector = new MetricsCollector();
 
-/**
- * Register metrics middleware
- */
 export function registerMetricsMiddleware(server: FastifyInstance): void {
-  // Record request metrics
-  server.addHook('onResponse', async (request, reply) => {
-    const method = request.method;
-    const route = request.url;
-    const statusCode = reply.statusCode || 500;
-    const durationMs = (reply.elapsedTime as number | undefined) || 0;
-
-    metricsCollector.recordRequest(method, route, statusCode, durationMs);
-
-    // Record error if status >= 400
-    if (statusCode >= 400) {
-      const errorCode = (reply as any).errorCode || `HTTP_${statusCode}`;
-      metricsCollector.recordError(errorCode);
-    }
+  server.addHook('onRequest', (request, _reply, done) => {
+    request.kbMetricsStart = performance.now();
+    done();
   });
+
+  server.addHook('onResponse', (request, reply, done) => {
+    const start = request.kbMetricsStart ?? performance.now();
+    const duration = Math.max(performance.now() - start, 0);
+    const method = (request.method || request.raw.method || 'GET').toUpperCase();
+    const routePath = request.routerPath ?? request.routeOptions?.url ?? request.url;
+    metricsCollector.recordRequest(method, routePath ?? request.url, reply.statusCode, duration);
+    if (reply.statusCode >= 400) {
+      metricsCollector.recordError(String(reply.statusCode));
+    }
+    done();
+  });
+}
+
+function normalizeRoute(route: string): string | null {
+  if (!route) {
+    return null;
+  }
+  const routePath = route.split('?')[0];
+  if (!routePath) {
+    return null;
+  }
+  return routePath.replace(/\/[0-9a-fA-F-]{6,}/g, '/:id');
+}
+
+function updateLatencyHistogram(
+  histogram: Map<string, RouteLatencyStats>,
+  bucket: string,
+  durationMs: number,
+  statusCode: number
+): void {
+  let stats = histogram.get(bucket);
+  if (!stats) {
+    stats = { count: 0, total: 0, max: 0, byStatus: {} };
+    histogram.set(bucket, stats);
+  }
+  stats.count += 1;
+  stats.total += durationMs;
+  stats.max = Math.max(stats.max, durationMs);
+  const statusKey = `${statusCode}`;
+  stats.byStatus[statusKey] = (stats.byStatus[statusKey] || 0) + 1;
 }
 
