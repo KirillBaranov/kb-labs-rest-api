@@ -3,7 +3,7 @@
  * OpenAPI specification endpoints
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import { mergeOpenAPISpecs } from '@kb-labs/cli-core';
@@ -48,8 +48,9 @@ export async function registerOpenAPIRoutes(
       const merged = mergeOpenAPISpecs(specs);
       
       // Add caching headers (1 hour)
+      const snapshot = cliApi.snapshot();
       reply.header('Cache-Control', 'public, max-age=3600');
-      reply.header('ETag', `"${cliApi.snapshot().version}"`);
+      reply.header('ETag', `"${snapshot.rev}"`);
       
       reply.send(merged);
     } catch (error) {

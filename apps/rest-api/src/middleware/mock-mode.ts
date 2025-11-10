@@ -3,7 +3,7 @@
  * Mock mode middleware (per-request)
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { IncomingHttpHeaders } from 'http';
 

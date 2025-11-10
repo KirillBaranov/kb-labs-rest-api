@@ -3,7 +3,7 @@
  * Per-route rate limiting middleware
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 
 /**
@@ -19,8 +19,8 @@ const routeLimits: Record<string, RouteRateLimit> = {
   '/release/runs': { max: 5, timeWindow: '1 minute' },
   '/devlink/check': { max: 20, timeWindow: '1 minute' },
   // Health endpoints - higher limits
-  '/health/live': { max: 100, timeWindow: '1 minute' },
-  '/health/ready': { max: 60, timeWindow: '1 minute' },
+  '/health': { max: 100, timeWindow: '1 minute' },
+  '/ready': { max: 60, timeWindow: '1 minute' },
   // Info endpoints - moderate limits
   '/info': { max: 30, timeWindow: '1 minute' },
   '/info/capabilities': { max: 30, timeWindow: '1 minute' },

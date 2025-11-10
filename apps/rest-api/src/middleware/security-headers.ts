@@ -3,7 +3,7 @@
  * Security headers middleware
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 
 /**
  * Register security headers middleware

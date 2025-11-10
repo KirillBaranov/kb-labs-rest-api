@@ -3,7 +3,7 @@
  * Global error guard for plugin routes
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { PluginErrorEnvelope } from '@kb-labs/api-contracts';
 import { ErrorCode } from '@kb-labs/api-contracts';
 

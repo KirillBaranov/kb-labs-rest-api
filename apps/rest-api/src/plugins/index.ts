@@ -3,7 +3,7 @@
  * Fastify plugins registration
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';

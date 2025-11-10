@@ -3,7 +3,7 @@
  * Cache middleware for ETag/Last-Modified support
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import { createHash } from 'crypto';
 
 /**

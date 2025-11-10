@@ -3,7 +3,7 @@
  * Response envelope wrapper middleware
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { errorEnvelopeSchema } from '@kb-labs/api-contracts';
 
