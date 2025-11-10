@@ -53,14 +53,14 @@
 - REST API: `/api/v1/release/preview` (POST)
 - **Status**: ✅ Match
 
-#### 4. **Health** ✅
-- Studio: `/api/v1/health/live`
-- REST API: `/api/v1/health/live`
-- **Status**: ✅ Match
+#### 4. **Health Snapshot** ✅
+- Studio: `/api/v1/health`
+- REST API: `/health`
+- **Status**: ✅ Schema-aligned (`kb.health/1`)
 
-#### 5. **System Endpoints** ✅
-- Studio: `/api/v1/health/ready`, `/api/v1/info`, `/api/v1/info/capabilities`, `/api/v1/info/config`
-- REST API: All match
+#### 5. **Readiness & System Endpoints** ✅
+- Studio: `/api/v1/ready`, `/api/v1/info`, `/api/v1/info/capabilities`, `/api/v1/info/config`
+- REST API: Matches (`/ready`, `/info`, `/info/capabilities`, `/info/config`)
 - **Status**: ✅ Match
 
 ---

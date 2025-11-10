@@ -40,12 +40,8 @@ HTTP request
 
 ## Shared Endpoints
 
-- `GET /health` — process health information with CLI registry metadata
-- `GET /ready` — readiness probe (fails if no plugins are available)
-- `GET /live` — liveness probe
-- `GET /health/plugins` — summary of discovered plugins
-- `GET /debug/registry/snapshot` — raw CLI registry snapshot
-- `GET /debug/plugins/:id/explain` — explain plugin selection
+- `GET /health` — process health snapshot (`kb.health/1`)
+- `GET /ready` — readiness probe described for orchestration
 - `GET /openapi.json` — aggregated OpenAPI document
 - `GET /openapi/:pluginId` — per-plugin OpenAPI document
 - `GET /api/v1/plugins/registry` — plugin manifest registry for Studio
@@ -56,8 +52,9 @@ HTTP request
 Metrics are collected by middleware and include:
 
 - total requests, per-method, per-status counters
-- latency totals with average, min, max
+- latency totals with average, min, max, plus per-route budgets (when manifests define timeouts)
 - error counters keyed by error code
+- per-plugin aggregates (`kb_plugin_request_*`) tracking success/error ratios and latency spikes
 - uptime information (process start time, last request timestamp)
 
 Both Prometheus (`/api/v1/metrics`) and JSON (`/api/v1/metrics/json`) formats are available. Logs use Pino with request IDs for correlation.

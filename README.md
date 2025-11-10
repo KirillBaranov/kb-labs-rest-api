@@ -58,14 +58,107 @@ KB_REST_RATE_LIMIT_WINDOW=1 minute
 
 # Mock mode (for testing)
 KB_REST_MOCK_MODE=false
+# Redis (optional, enables horizontal scaling via shared snapshots)
+KB_REST_REDIS_URL=redis://localhost:6379
+KB_REST_REDIS_NAMESPACE=kb
 ```
+
+### Redis Integration
+
+When `redis` is configured (either via env vars above or `rest.redis` in `kb-labs.config.json`), the REST API connects to Redis as a read-only consumer:
+
+```
+{
+  "rest": {
+    "redis": {
+      "url": "redis://cache.internal:6379",
+      "namespace": "kb"
+    }
+  }
+}
+```
+
+CLI producers persist `kb.registry/1` snapshots to the same Redis instance and publish `kb:registry:changed`; REST subscribers replay snapshots from Redis on boot, so multiple REST nodes share the same data without re-running discovery.
 
 ### Basic Usage
 
-#### Health Check
+#### Health Snapshot (`GET /health`)
 
 ```bash
 curl http://localhost:3001/health
+```
+
+Response (schema `kb.health/1`):
+
+```json
+{
+  "schema": "kb.health/1",
+  "ts": "2025-11-08T10:20:32.123Z",
+  "uptimeSec": 512,
+  "version": {
+    "kbLabs": "0.29.0",
+    "cli": "0.29.0",
+    "rest": "0.14.1",
+    "studio": "0.20.0",
+    "git": {
+      "sha": "3f5c7ab",
+      "dirty": false
+    }
+  },
+  "registry": {
+    "total": 8,
+    "withRest": 5,
+    "withStudio": 6,
+    "errors": 0,
+    "generatedAt": "2025-11-08T10:20:02.002Z",
+    "expiresAt": "2025-11-08T10:21:02.002Z",
+    "partial": false,
+    "stale": false
+  },
+  "status": "healthy",
+  "components": [
+    {
+      "id": "@kb-labs/mind",
+      "version": "0.8.3",
+      "restRoutes": 4,
+      "studioWidgets": 5
+    }
+  ],
+  "meta": {
+    "source": "rest",
+    "readiness": {
+      "pluginRoutesMounted": true,
+      "pluginRoutesCount": 12,
+      "pluginRouteErrors": 0,
+      "registryPartial": false,
+      "registryStale": false,
+      "pluginMounts": {
+        "total": 12,
+        "succeeded": 12,
+        "failed": 0,
+        "elapsedMs": 184.21
+      }
+    }
+  }
+}
+```
+
+> The same payload is available under the configured base path (e.g. `/api/v1/health` when `KB_REST_BASE_PATH=/api/v1`).
+
+#### Readiness Probe (`GET /ready`)
+
+```bash
+curl -i http://localhost:3001/ready
+```
+
+Possible responses:
+
+```json
+{ "ready": true }
+```
+
+```json
+{ "ready": false, "reason": "plugin_routes_not_mounted" }
 ```
 
 #### Plugin Registry
@@ -86,13 +179,29 @@ curl http://localhost:3001/openapi.json
 curl http://localhost:3001/api/v1/metrics
 ```
 
+Includes per-route latency histograms (`http_request_duration_ms_bucket`) and plugin mount counters (`kb_plugins_mount_total`, `kb_plugins_mount_failed`).
+
+### Live Registry Stream (Server-Sent Events)
+
+The REST API broadcasts registry and readiness updates over SSE:
+
+- `GET /api/v1/events/registry`
+  - `event: registry` — `{ schema:"kb.registry/1", rev, generatedAt, partial, stale, ttlMs, expiresAt }`
+  - `event: health` — `{ schema:"kb.health/1", status, ready, reason, pluginsMounted, pluginsFailed }`
+  - Append `?access_token=<token>` if the stream is protected behind an auth token (Studio does this automatically when `VITE_EVENTS_AUTH_TOKEN` is set)
+
+Backed by Redis (`KB_REST_REDIS_URL`), so multiple REST nodes share the same snapshot without recomputing discovery.
+
+Studio and other consumers can provide custom headers (e.g. bearer token) via `VITE_EVENTS_HEADERS` and `VITE_EVENTS_AUTH_TOKEN`.
+
 ## ✨ Features
 
 - **Plugin-powered routing**: Mounts REST handlers straight from discovered plugin manifests (no hard-coded routes)
 - **Studio-ready registry**: Exposes full manifest metadata for Studio and other clients via `/api/v1/plugins/registry`
 - **Shared infrastructure**: CORS profiles, rate limiting, security headers, request envelope, and metrics baked in
+- **Redis-backed cache**: Optional Redis configuration lets multiple REST instances consume the same CLI snapshot without re-running discovery
 - **OpenAPI aggregation**: Merges OpenAPI fragments emitted by plugins into a single `/openapi.json`
-- **Mock & diagnostics**: Per-request mock flag plus health/ready/live and debug endpoints for quick troubleshooting
+- **Mock & diagnostics**: Per-request mock flag plus `/health` snapshot (`kb.health/1`) and `/ready` probe for automated monitoring
 
 ## 📁 Repository Structure
 
@@ -185,6 +294,8 @@ The REST API server can be configured via environment variables:
 - **KB_REST_RATE_LIMIT_WINDOW**: Rate-limit window (default: `1 minute`)
 - **KB_REST_REQUEST_TIMEOUT**: Per-request timeout milliseconds (default: 30000)
 - **KB_REST_BODY_LIMIT**: Maximum request body size in bytes (default: 10485760)
+- **KB_REST_REDIS_URL**: Redis connection string used for registry snapshots/pub-sub (e.g. `redis://localhost:6379`)
+- **KB_REST_REDIS_NAMESPACE**: Redis namespace/prefix for keys and channels (default: `kb`)
 - **KB_REST_MOCK_MODE**: Enable mock mode globally (true | false)
 
 ### Job Queue Configuration
@@ -261,12 +372,8 @@ All responses use an envelope format:
 
 #### Health & Diagnostics
 
-- `GET /health` — Process health details
-- `GET /ready` — Readiness probe (returns 503 if no plugins are available)
-- `GET /live` — Liveness probe
-- `GET /health/plugins` — List discovered plugins
-- `GET /debug/registry/snapshot` — Raw CLI registry snapshot
-- `GET /debug/plugins/:id/explain` — Explain why a plugin was (not) selected
+- `GET /health` — Versioned snapshot (`kb.health/1`), always HTTP 200
+- `GET /ready` — Readiness probe (`200` when ready, `503` with reason otherwise)
 
 #### Plugin Registry & Discovery
 
@@ -297,9 +404,10 @@ Each plugin contributes its own REST handlers and base path via its manifest. In
 
 - **Structured Logging**: Pino logger with correlation IDs
 - **Request ID**: `X-Request-Id` header for request tracking
-- **Metrics**: Request, latency, and error counters
+- **Metrics**: Request, latency, error counters, and plugin mount stats
   - `GET /api/v1/metrics` — Prometheus format
   - `GET /api/v1/metrics/json` — JSON format
+- **Server-Sent Events**: `/api/v1/events/registry` streams registry revisions and readiness changes for Studio auto-refresh
 - **Error Tracking**: Full error envelope with traceId
 
 ## 📚 Documentation

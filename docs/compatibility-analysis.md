@@ -17,8 +17,8 @@
 | `GET /api/v1/jobs/:jobId` | ✅ | ✅ | ✅ Match |
 | `GET /api/v1/jobs/:jobId/events` | ✅ | ✅ | ✅ Match |
 | `POST /api/v1/jobs/:jobId/cancel` | - | ✅ | ✅ Available |
-| `GET /api/v1/health/live` | ✅ | ✅ | ✅ Match |
-| `GET /api/v1/health/ready` | ✅ | ✅ | ✅ Match |
+| `GET /api/v1/health` | ✅ | ✅ (`/health`) | ✅ Match |
+| `GET /api/v1/ready` | ✅ | ✅ (`/ready`) | ✅ Match |
 | `GET /api/v1/info` | ✅ | ✅ | ✅ Match |
 | `GET /api/v1/metrics` | - | ✅ | ✅ Available |
 

@@ -110,7 +110,7 @@ docker-compose up -d
 docker-compose logs -f rest-api
 
 # Check health
-curl http://localhost:3001/api/v1/health/live
+curl http://localhost:3001/health
 ```
 
 ### Health Check
@@ -121,8 +121,8 @@ docker ps
 # HEALTHY status indicates container is healthy
 
 # Manual health check
-curl http://localhost:3001/api/v1/health/live
-curl http://localhost:3001/api/v1/health/ready
+curl http://localhost:3001/health
+curl http://localhost:3001/ready
 ```
 
 ## Development
@@ -189,7 +189,7 @@ docker logs kb-labs-rest-api
 
 Verify health endpoint:
 ```bash
-docker exec kb-labs-rest-api curl -f http://localhost:3001/api/v1/health/live
+docker exec kb-labs-rest-api curl -f http://localhost:3001/health
 ```
 
 ## Security Best Practices

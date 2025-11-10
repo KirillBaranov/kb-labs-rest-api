@@ -60,8 +60,8 @@
 | Release Preview | `POST /api/v1/release/preview` | `POST /api/v1/release/preview` | ✅ Match |
 | Job Status | `GET /api/v1/jobs/:jobId` | `GET /api/v1/jobs/:jobId` | ✅ Match |
 | Job Events | `GET /api/v1/jobs/:jobId/events` | `GET /api/v1/jobs/:jobId/events` | ✅ Match |
-| Health | `GET /api/v1/health/live` | `GET /api/v1/health/live` | ✅ Match |
-| Ready | `GET /api/v1/health/ready` | `GET /api/v1/health/ready` | ✅ Match |
+| Health | `GET /api/v1/health` | `GET /health` (+ `/api/v1/health`) | ✅ Match |
+| Ready | `GET /api/v1/ready` | `GET /ready` (+ `/api/v1/ready`) | ✅ Match |
 
 ### Data Structure Compatibility
 

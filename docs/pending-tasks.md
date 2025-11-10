@@ -10,7 +10,7 @@
 - [x] Error Handling - Standardized error codes and mapping
 - [x] Idempotency - `Idempotency-Key` header support
 - [x] SSE Events - Real-time job event streaming
-- [x] Health Endpoints - `/health/live` and `/health/ready`
+- [x] Health Endpoints - `/health` (snapshot) and `/ready`
 - [x] CORS Profiles - Dev, preview, prod configurations
 - [x] Rate Limiting - Global rate limiting
 - [x] Security Headers - HSTS, X-Frame-Options, etc.

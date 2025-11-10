@@ -2,28 +2,64 @@
 
 ## Basic Usage
 
-### Health Check
+### Health Snapshot
 
 ```bash
-curl http://localhost:3001/api/v1/health/live
+curl http://localhost:3001/health
 ```
 
-Response:
+Response (`kb.health/1`):
 ```json
 {
-  "ok": true,
-  "data": {
-    "status": "ok",
-    "version": "1.0.0",
-    "node": "v20.10.0",
-    "uptimeSec": 3600
+  "schema": "kb.health/1",
+  "ts": "2025-02-10T09:42:15.123Z",
+  "uptimeSec": 128,
+  "version": {
+    "kbLabs": "0.24.0",
+    "cli": "0.24.0",
+    "rest": "0.12.3",
+    "studio": "0.18.0"
   },
+  "registry": {
+    "total": 6,
+    "withRest": 3,
+    "withStudio": 4,
+    "errors": 0,
+    "generatedAt": "2025-02-10T09:41:58.002Z",
+    "expiresAt": "2025-02-10T09:42:58.002Z",
+    "partial": false,
+    "stale": false
+  },
+  "status": "healthy",
+  "components": [
+    {
+      "id": "@kb-labs/mind",
+      "version": "0.8.1",
+      "restRoutes": 4,
+      "studioWidgets": 5
+    }
+  ],
   "meta": {
-    "requestId": "01K92CXQTGV3BV7A884XW1JM2Y",
-    "durationMs": 5,
-    "apiVersion": "1.0.0"
+    "source": "rest",
+    "readiness": {
+      "pluginRoutesMounted": true,
+      "pluginRoutesCount": 9,
+      "pluginRouteErrors": 0
+    }
   }
 }
+```
+
+> When `KB_REST_BASE_PATH` is set (e.g. `/api/v1`), the same payload is also available at `/api/v1/health`.
+
+### Readiness Probe
+
+```bash
+curl -i http://localhost:3001/ready
+```
+
+```json
+{ "ready": true }
 ```
 
 ### Create Audit Run
@@ -283,7 +319,7 @@ Response (JSON):
         "5xx": 34
       },
       "byRoute": {
-        "/health/live": 500,
+        "/health": 500,
         "/audit/runs": 234
       }
     },
