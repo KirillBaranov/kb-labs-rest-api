@@ -10,6 +10,9 @@ import { createCliAPI } from '@kb-labs/cli-api';
 import { setCliApi, disposeCliApi } from './plugins/cli-discovery.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
+import { initRestLogging, createRestLogger } from './logging.js';
+import type { LogLevel } from '@kb-labs/core-sys';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Find monorepo root (prefer pnpm-workspace.yaml or .git over package.json)
@@ -77,27 +80,37 @@ async function findMonorepoRoot(startDir: string): Promise<string> {
  * Bootstrap REST API server
  */
 export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
+  const logLevel = resolveLogLevel(process.env.REST_LOG_LEVEL);
+  initRestLogging(logLevel);
+  const bootstrapLogger = createRestLogger('bootstrap', {
+    traceId: randomUUID(),
+    reqId: 'rest-bootstrap',
+  });
+
   // Load configuration
   const { config, diagnostics } = await loadRestApiConfig(cwd);
   
   if (diagnostics.length > 0) {
-    console.warn('Configuration warnings:');
+    bootstrapLogger.warn('Configuration diagnostics', { diagnosticsCount: diagnostics.length });
     for (const diagnostic of diagnostics) {
-      console.warn(`  ${diagnostic.level}: ${diagnostic.message}`);
+      bootstrapLogger.warn('Configuration diagnostic', {
+        level: diagnostic.level,
+        message: diagnostic.message,
+      });
     }
   }
 
   // Detect repo root (prefer monorepo root)
   const repoRoot = await findMonorepoRoot(cwd);
-  console.log(`[DEBUG] Bootstrap: cwd=${cwd}, repoRoot=${repoRoot}`);
+  bootstrapLogger.debug('Resolved repo root', { cwd, repoRoot });
 
   // Initialize CLI API singleton
-  console.log('[Bootstrap] Initializing CLI API...');
+  bootstrapLogger.info('Initializing CLI API');
+  const redisConfig = config.redis;
   const cliApi = await createCliAPI({
     discovery: {
       strategies: ['workspace', 'pkg', 'dir', 'file'],
       roots: [repoRoot],
-      preferV2: true,
       allowDowngrade: false,
     },
     cache: {
@@ -105,8 +118,17 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
       ttlMs: 30_000,
     },
     logger: {
-      level: 'info',
+      level: logLevel,
     },
+    snapshot: {
+      mode: 'consumer',
+    },
+    pubsub: redisConfig
+      ? {
+          redisUrl: redisConfig.url,
+          namespace: redisConfig.namespace,
+        }
+      : undefined,
   });
   
   // Set singleton for cli-discovery
@@ -114,7 +136,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   
   // Subscribe to changes
   cliApi.onChange((diff: { added: unknown[]; removed: unknown[]; changed: unknown[] }) => {
-    console.log('[CliAPI] Registry changed:', {
+    bootstrapLogger.info('CLI registry changed', {
       added: diff.added.length,
       removed: diff.removed.length,
       changed: diff.changed.length,
@@ -130,22 +152,33 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     host: '0.0.0.0',
   });
 
-  console.log(`REST API server listening on ${address}`);
+  bootstrapLogger.info('REST API server listening', { address });
 
   // Setup graceful shutdown
   const shutdown = async (signal: string) => {
-    console.log(`Received ${signal}, shutting down gracefully...`);
+    bootstrapLogger.warn('Received shutdown signal', { signal });
     
     // Dispose CLI API
     await disposeCliApi();
     
     // Close server
     await server.close();
-    console.log('Server closed');
+    bootstrapLogger.info('Server closed');
     process.exit(0);
   };
 
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
+}
+
+function resolveLogLevel(level: unknown): LogLevel {
+  if (!level) {
+    return 'info';
+  }
+  const normalized = String(level).toLowerCase();
+  if (normalized === 'debug' || normalized === 'info' || normalized === 'warn' || normalized === 'error') {
+    return normalized;
+  }
+  return 'info';
 }
 
