@@ -98,6 +98,21 @@ export async function loadRestApiConfig(
       overrides.mockMode = true;
     }
 
+    if (env.KB_REST_REDIS_URL) {
+      overrides.redis = {
+        ...(overrides.redis ?? {}),
+        url: env.KB_REST_REDIS_URL,
+        namespace: overrides.redis?.namespace ?? defaults.redis?.namespace ?? 'kb',
+      } as RestApiConfig['redis'];
+    }
+
+    if (env.KB_REST_REDIS_NAMESPACE) {
+      overrides.redis = {
+        ...(overrides.redis ?? (env.KB_REST_REDIS_URL ? { url: env.KB_REST_REDIS_URL } : defaults.redis ?? {})),
+        namespace: env.KB_REST_REDIS_NAMESPACE,
+      } as RestApiConfig['redis'];
+    }
+
     if (env.KB_REST_RATE_LIMIT_MAX) {
       const parsedMax = Number.parseInt(env.KB_REST_RATE_LIMIT_MAX, 10);
       if (!Number.isNaN(parsedMax)) {

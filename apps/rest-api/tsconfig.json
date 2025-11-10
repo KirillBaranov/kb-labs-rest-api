@@ -8,7 +8,11 @@
     "moduleResolution": "node",
     "module": "ESNext",
     "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    "baseUrl": ".",
+    "paths": {
+      "@kb-labs/cli-api": ["../../../kb-labs-cli/packages/cli-api/src/index.ts"]
+    }
   }
 }
 

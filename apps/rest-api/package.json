@@ -7,8 +7,8 @@
   "scripts": {
     "clean": "rimraf dist",
     "build": "tsup",
-    "dev": "tsx watch src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "NODE_PATH=\"../../kb-labs-core/packages/sys:../../kb-labs-core/packages/core\" tsx watch src/index.ts",
+    "start": "NODE_PATH=\"../../kb-labs-core/packages/sys:../../kb-labs-core/packages/core\" node dist/index.js",
     "type-check": "tsc --noEmit",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
@@ -19,6 +19,7 @@
     "@kb-labs/rest-api-core": "link:../../packages/rest-api-core",
     "@kb-labs/api-contracts": "link:../../../kb-labs-api-contracts/packages/api-contracts",
     "@kb-labs/core-sys": "link:../../../kb-labs-core/packages/sys",
+    "@kb-labs/core-workspace": "link:../../../kb-labs-core/packages/core",
     "@kb-labs/cli-api": "link:../../../kb-labs-cli/packages/cli-api",
     "@kb-labs/cli-core": "link:../../../kb-labs-cli/packages/core",
     "@kb-labs/plugin-manifest": "link:../../../kb-labs-plugin/packages/manifest",

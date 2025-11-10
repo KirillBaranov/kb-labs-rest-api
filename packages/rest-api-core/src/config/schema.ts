@@ -22,8 +22,31 @@ export const restApiConfigSchema = z.object({
     max: z.number().int().positive().default(60),
     timeWindow: z.string().default('1 minute'),
   }).optional(),
+  startup: z.object({
+    maxConcurrent: z.number().int().positive().default(32),
+    queueLimit: z.number().int().nonnegative().default(128),
+    timeoutMs: z.number().int().positive().default(5000),
+    retryAfterSeconds: z.number().int().positive().default(2),
+  }).optional(),
   plugins: z.array(z.string()).default([]),
   mockMode: z.boolean().default(false),
+  redis: z
+    .object({
+      url: z.string().min(1),
+      namespace: z.string().default('kb'),
+    })
+    .optional(),
+  events: z
+    .object({
+      registry: z
+        .object({
+          token: z.string().min(1),
+          headerName: z.string().default('authorization'),
+          queryParam: z.string().default('access_token'),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 
 export type RestApiConfig = z.infer<typeof restApiConfigSchema>;
