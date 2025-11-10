@@ -3,13 +3,32 @@
  * Plugin routes registration
  */
 
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
 import type { ManifestV2 } from '@kb-labs/plugin-manifest';
 import { mountRoutes } from '@kb-labs/plugin-adapter-rest';
-import { execute as runtimeExecute, validateManifestOnStartup } from '@kb-labs/plugin-runtime';
+import { execute as runtimeExecute } from '@kb-labs/plugin-runtime';
 import { getV2Manifests, type PluginManifestWithPath } from '../plugins/compat.js';
 import * as path from 'node:path';
+import type { ReadinessState } from './readiness.js';
+import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
+import { metricsCollector } from '../middleware/metrics.js';
+import { performance } from 'node:perf_hooks';
+
+interface SnapshotManifestEntry {
+  pluginId: string;
+  manifest: ManifestV2;
+  pluginRoot: string;
+}
+
+function extractSnapshotManifests(snapshot: RegistrySnapshot): SnapshotManifestEntry[] {
+  return (snapshot.manifests || []).map(entry => ({
+    pluginId: entry.pluginId,
+    manifest: entry.manifest,
+    pluginRoot: entry.pluginRoot,
+  }));
+}
 
 /**
  * Register plugin routes
@@ -17,35 +36,71 @@ import * as path from 'node:path';
 export async function registerPluginRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
-  repoRoot: string
+  repoRoot: string,
+  cliApi: CliAPI,
+  readiness?: ReadinessState
 ): Promise<void> {
-  try {
-    // Discover and get v2 manifests with paths
-    const { manifestsWithPaths, warnings } = await getV2Manifests(repoRoot);
+  const gatewayTimeoutMs = config.timeouts?.requestTimeout ?? 30_000;
+  const stats = {
+    mountedRoutes: 0,
+    errors: 0,
+  };
 
-    // Log warnings
-    for (const warning of warnings) {
-      server.log.warn(warning);
+  if (readiness) {
+    readiness.pluginRoutesMounted = false;
+    readiness.pluginMountInProgress = true;
+    readiness.pluginRoutesCount = 0;
+    readiness.pluginRouteErrors = 0;
+    readiness.pluginRouteFailures = [];
+    readiness.pluginRoutesLastDurationMs = null;
+  }
+
+  metricsCollector.resetPluginRouteBudgets();
+
+  const mountMetrics = metricsCollector.beginPluginMount();
+  const mountStart = performance.now();
+
+  try {
+    const workspaceResolution = await resolveWorkspaceRoot({
+      startDir: repoRoot,
+      env: {
+        KB_LABS_WORKSPACE_ROOT: process.env.KB_LABS_WORKSPACE_ROOT,
+        KB_LABS_REPO_ROOT: process.env.KB_LABS_REPO_ROOT,
+      },
+    });
+    const workspaceRoot = workspaceResolution.rootDir;
+    server.log.info({
+      repoRoot,
+      workspaceRoot,
+      source: workspaceResolution.source,
+    }, 'Resolved workspace root');
+
+    const snapshot = cliApi.snapshot();
+    const manifests = extractSnapshotManifests(snapshot);
+
+    if (snapshot.partial || snapshot.stale) {
+      server.log.warn({
+        partial: snapshot.partial,
+        stale: snapshot.stale,
+        rev: snapshot.rev,
+      }, 'Registry snapshot is partial or stale');
     }
 
-    // Mount routes for each plugin
-    for (const manifestWithPath of manifestsWithPaths) {
-      const { manifest, manifestPath, pluginRoot } = manifestWithPath;
-      
+    for (const entry of manifests) {
+      const { manifest, pluginRoot } = entry;
+
       if (!manifest.rest?.routes || manifest.rest.routes.length === 0) {
         continue;
       }
 
-      // Validate REST handlers only (CLI handlers are not required for REST API)
-      // Check if REST handlers exist
       const restValidationErrors: string[] = [];
       if (manifest.rest?.routes) {
-        const manifestDir = path.dirname(manifestPath);
+        const manifestDir = pluginRoot;
         const fs = await import('fs/promises');
         for (const route of manifest.rest.routes) {
           const handlerRef = route.handler;
           const [handlerFile, exportName] = handlerRef.split('#');
-          
+
           if (!exportName || !handlerFile) {
             restValidationErrors.push(
               `Route ${route.method} ${route.path}: Invalid handler reference "${handlerRef}" (must include export name)`
@@ -64,60 +119,37 @@ export async function registerPluginRoutes(
         }
       }
 
-      // If REST handlers are missing, skip this plugin
       if (restValidationErrors.length > 0) {
-        server.log.error(
-          `Plugin ${manifest.id}@${manifest.version} REST validation failed:`
-        );
-        for (const error of restValidationErrors) {
-          server.log.error(`    - ${error}`);
+        server.log.error({
+          plugin: `${manifest.id}@${manifest.version}`,
+          pluginRoot,
+          remediation: 'Verify REST handler file and export exist',
+          errors: restValidationErrors,
+        }, 'REST validation failed, skipping routes');
+        stats.errors += 1;
+        if (readiness) {
+          readiness.pluginRouteFailures.push({
+            id: manifest.id,
+            error: summarizeValidationErrors(restValidationErrors),
+          });
         }
-        // Continue with other plugins but skip this one
         continue;
       }
 
-      // Log warnings about CLI handlers if they exist but are not found (non-blocking)
       try {
-        const validation = await validateManifestOnStartup(manifest, manifestPath);
-        if (validation.warnings.length > 0) {
-          server.log.warn(
-            `Plugin ${manifest.id}@${manifest.version} validation warnings:`
-          );
-          for (const warning of validation.warnings) {
-            server.log.warn(`    - ${warning}`);
-          }
-        }
-        // Log CLI validation errors as warnings (non-blocking for REST API)
-        if (!validation.valid && validation.errors.length > 0) {
-          const cliErrors = validation.errors.filter(e => e.includes('CLI command'));
-          if (cliErrors.length > 0) {
-            server.log.warn(
-              `Plugin ${manifest.id}@${manifest.version} CLI handlers not found (non-blocking for REST API):`
-            );
-            for (const error of cliErrors) {
-              server.log.warn(`    - ${error}`);
-            }
-          }
-        }
-      } catch (error) {
-        // If validation throws, log but continue (non-blocking)
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        server.log.warn(`Plugin ${manifest.id}@${manifest.version} validation error (non-blocking): ${errorMessage}`);
-      }
-
-      try {
-        // Combine config.basePath (/api/v1) with manifest.rest.basePath (/v1/plugins/...)
-        // Result: /api/v1/plugins/...
+        const start = performance.now();
         const pluginBasePath = manifest.rest?.basePath
           ? manifest.rest.basePath.replace(/^\/v1/, config.basePath)
           : `${config.basePath}/plugins/${manifest.id}`;
 
-        server.log.info(`Mounting routes for plugin ${manifest.id}@${manifest.version}`);
-        server.log.info(`  config.basePath: ${config.basePath}`);
-        server.log.info(`  manifest.rest.basePath: ${manifest.rest?.basePath}`);
-        server.log.info(`  pluginBasePath: ${pluginBasePath}`);
-        server.log.info(`  pluginRoot: ${pluginRoot}`);
-        server.log.info(`  routes count: ${manifest.rest?.routes?.length || 0}`);
+        server.log.info({
+          plugin: `${manifest.id}@${manifest.version}`,
+          configBasePath: config.basePath,
+          manifestBasePath: manifest.rest?.basePath,
+          pluginBasePath,
+          pluginRoot,
+          routes: manifest.rest?.routes?.length ?? 0,
+        }, 'Mounting plugin routes');
 
         await mountRoutes(
           server as any,
@@ -140,21 +172,74 @@ export async function registerPluginRoutes(
               return [];
             })(),
             basePath: pluginBasePath,
-            pluginRoot, // Pass plugin root to mountRoutes
+            pluginRoot,
+            workdir: workspaceRoot,
+            fallbackTimeoutMs: gatewayTimeoutMs,
+            rateLimit: config.rateLimit,
+            onRouteMounted: info => {
+              metricsCollector.registerRouteBudget(
+                info.method,
+                info.path,
+                info.timeoutMs,
+                manifest.id
+              );
+            },
           }
         );
-
-        server.log.info(`Successfully mounted routes for plugin ${manifest.id}@${manifest.version}`);
+        const duration = performance.now() - start;
+        mountMetrics.recordSuccess(manifest.id, manifest.rest?.routes?.length ?? 0, duration);
+        server.log.info({
+          plugin: `${manifest.id}@${manifest.version}`,
+          durationMs: Number(duration.toFixed(2)),
+        }, 'Successfully mounted plugin routes');
+        stats.mountedRoutes += manifest.rest?.routes?.length ?? 0;
       } catch (error) {
-        server.log.error(`Failed to mount routes for plugin ${manifest.id}: ${error instanceof Error ? error.message : String(error)}`);
-        server.log.error(`  Error stack: ${error instanceof Error ? error.stack : String(error)}`);
-        // Continue with other plugins - never crash API
+        mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
+        server.log.error({
+          plugin: manifest.id,
+          err: error instanceof Error ? error : new Error(String(error)),
+        }, 'Failed to mount plugin routes');
+        stats.errors += 1;
+        if (readiness) {
+          readiness.pluginRouteFailures.push({
+            id: manifest.id,
+            error: `rest_mount_failed ${shortErrorMessage(error)}`,
+          });
+        }
       }
     }
   } catch (error) {
-    // Never crash API - log and continue
-    server.log.error(`Plugin discovery failed: ${error instanceof Error ? error.message : String(error)}`);
+    server.log.error({
+      err: error instanceof Error ? error : new Error(String(error)),
+    }, 'Plugin discovery failed');
+    stats.errors += 1;
+    if (readiness) {
+      readiness.pluginRoutesCount = stats.mountedRoutes;
+      readiness.pluginRouteErrors = stats.errors;
+      readiness.pluginRoutesMounted = false;
+      readiness.pluginMountInProgress = false;
+      readiness.pluginRoutesLastDurationMs = null;
+      readiness.pluginRouteFailures.push({
+        id: 'discovery',
+        error: `rest_discovery_failed ${shortErrorMessage(error)}`,
+      });
+    }
+    metricsCollector.completePluginMount(server.log);
+    return;
   }
+
+  if (readiness) {
+    readiness.pluginRoutesCount = stats.mountedRoutes;
+    readiness.pluginRouteErrors = stats.errors;
+    readiness.pluginRoutesMounted = stats.errors === 0;
+    readiness.pluginMountInProgress = false;
+    readiness.lastPluginMountTs = new Date().toISOString();
+    readiness.pluginRoutesLastDurationMs = Number(
+      (performance.now() - mountStart).toFixed(2)
+    );
+  }
+
+  metricsCollector.completePluginMount(server.log);
 }
 
 /**
@@ -180,24 +265,48 @@ export async function getAllPluginManifestsWithPaths(
 export async function registerPluginRegistry(
   server: FastifyInstance,
   config: RestApiConfig,
-  repoRoot: string
+  cliApi: CliAPI
 ): Promise<void> {
   const basePath = config.basePath;
-  // GET /api/v1/plugins/registry - return all plugin manifests for Studio
-  server.get(`${basePath}/plugins/registry`, async (request, reply) => {
+  server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
     try {
-      const { v2Manifests } = await getV2Manifests(repoRoot);
-      // Return directly without envelope wrapper for Studio compatibility
+      const snapshot = cliApi.snapshot();
+      const manifests = snapshot.manifests.map(entry => ({
+        pluginId: entry.pluginId,
+        manifest: entry.manifest,
+        pluginRoot: entry.pluginRoot,
+        source: entry.source,
+      }));
       reply.type('application/json');
       return {
-        manifests: v2Manifests,
+        manifests,
       };
     } catch (error) {
-      server.log.error(`Failed to get plugin registry: ${error instanceof Error ? error.message : String(error)}`);
+      server.log.error({
+        err: error instanceof Error ? error : new Error(String(error)),
+      }, 'Failed to get plugin registry');
       reply.code(500).send({
         error: 'Failed to load plugin registry',
         message: error instanceof Error ? error.message : String(error),
       });
     }
   });
+}
+
+function summarizeValidationErrors(errors: string[]): string {
+  if (errors.length === 0) {
+    return 'rest_validation_failed';
+  }
+  const first = errors[0] || 'rest_validation_failed';
+  const prefix = first.split(':')[0]?.trim() ?? 'rest_validation_failed';
+  return `rest_validation_failed ${prefix}`.trim();
+}
+
+function shortErrorMessage(error: unknown): string {
+  if (!error) {
+    return 'unknown_error';
+  }
+  const message = error instanceof Error ? error.message : String(error);
+  const firstLine = message.trim().split('\n')[0] ?? message.trim();
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
 }

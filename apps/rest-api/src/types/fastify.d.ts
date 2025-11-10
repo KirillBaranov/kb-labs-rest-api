@@ -7,6 +7,10 @@ import type { FastifyBaseLogger } from 'fastify/types/logger';
 import type { FastifySchema } from 'fastify/types/schema';
 import type { FastifyTypeProvider, FastifyTypeProviderDefault } from 'fastify/types/type-provider';
 import type { ContextConfigDefault, RawReplyDefaultExpression, RawRequestDefaultExpression, RawServerBase, RawServerDefault } from 'fastify/types/utils';
+import type { CliAPI } from '@kb-labs/cli-api';
+import type { ReadinessState } from '../routes/readiness';
+import '@fastify/type-provider-typebox';
+import type { EventHub } from '../events/hub.js';
 
 declare module 'fastify/types/instance' {
   interface FastifyInstance<
@@ -18,12 +22,37 @@ declare module 'fastify/types/instance' {
     SchemaCompiler extends FastifySchema = FastifySchema,
     ContextConfig = ContextConfigDefault
   > {
-    rateLimit?: unknown;
+    cliApi?: CliAPI;
+    kbReadiness?: ReadinessState;
+    kbStartupGuard?: {
+      inFlight: number;
+    };
+    kbEventHub?: EventHub;
+  }
+}
+
+declare module 'fastify' {
+  interface FastifyInstance {
+    cliApi?: CliAPI;
+    kbReadiness?: ReadinessState;
+    kbStartupGuard?: {
+      inFlight: number;
+    };
+    kbEventHub?: EventHub;
   }
 }
 
 declare module 'fastify/types/request' {
   interface FastifyRequest {
     mockMode?: boolean;
+    kbStartupGuardActive?: boolean;
+    kbStartupGuardTimer?: NodeJS.Timeout;
+    kbMetricsStart?: number;
+    kbHeaderState?: {
+      vary: Set<string>;
+      sensitive: Set<string>;
+      rateLimitKeys: Record<string, string>;
+      sanitized: Record<string, string>;
+    };
   }
 }

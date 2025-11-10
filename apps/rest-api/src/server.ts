@@ -4,12 +4,14 @@
  */
 
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify/types/instance';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import { registerRoutes } from './routes/index.js';
 import { registerPlugins } from './plugins/index.js';
 import { registerMiddleware } from './middleware/index.js';
+import { createRestLogger } from './logging.js';
+import { randomUUID } from 'node:crypto';
 
 /**
  * Create and configure Fastify server
@@ -20,12 +22,7 @@ export async function createServer(
   cliApi: CliAPI
 ): Promise<FastifyInstance> {
   const server = Fastify({
-    logger: {
-      level: 'info',
-      transport: process.env.NODE_ENV === 'development' ? {
-        target: 'pino-pretty',
-      } : undefined,
-    },
+    logger: false,
     requestIdHeader: 'X-Request-Id',
     requestIdLogLabel: 'requestId',
     disableRequestLogging: false,
@@ -33,18 +30,29 @@ export async function createServer(
     bodyLimit: config.timeouts?.bodyLimit || 10485760, // 10MB
   });
 
+  const restLogger = createRestServerLogger();
+  server.log = restLogger as unknown as typeof server.log;
+
   // Store cliApi in server instance
-  (server as any).cliApi = cliApi;
+  server.cliApi = cliApi;
 
   // Register plugins
-  await registerPlugins(server, config);
+  await registerPlugins(server as unknown as FastifyInstance, config);
 
   // Register middleware
-  registerMiddleware(server, config);
+  registerMiddleware(server as unknown as FastifyInstance, config);
 
   // Register routes
-  await registerRoutes(server, config, repoRoot, cliApi);
+  await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, cliApi);
 
-  return server;
+  return server as unknown as FastifyInstance;
+}
+
+function createRestServerLogger() {
+  const traceId = randomUUID();
+  return createRestLogger('server', {
+    traceId,
+    reqId: traceId,
+  });
 }
 
