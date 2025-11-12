@@ -8,6 +8,7 @@
  */
 export const objectSchema = {
   type: 'object',
+  additionalProperties: true,
 } as const;
 
 /**

@@ -5,13 +5,14 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { CliAPI, RedisStatus } from '@kb-labs/cli-api';
 import { EventHub } from '../events/hub.js';
 import { registerEventRoutes } from './events.js';
 import { registerHealthRoutes } from './health.js';
 import { registerOpenAPIRoutes } from './openapi.js';
 import { registerMetricsRoutes } from './metrics.js';
 import { registerPluginRoutes, registerPluginRegistry } from './plugins.js';
+import { registerWorkflowRoutes } from './workflows.js';
 import type { ReadinessState } from './readiness.js';
 import { isReady, resolveReadinessReason } from './readiness.js';
 import { metricsCollector } from '../middleware/metrics.js';
@@ -39,6 +40,7 @@ export async function registerRoutes(
     subscriber: null,
     cache: null,
   };
+
   const registryLoaded =
     initialSnapshot.plugins.length > 0 && !initialSnapshot.partial && !initialSnapshot.stale;
 
@@ -48,7 +50,7 @@ export async function registerRoutes(
     registryPartial: initialSnapshot.partial,
     registryStale: initialSnapshot.stale,
     pluginRoutesMounted: false,
-     pluginMountInProgress: true,
+    pluginMountInProgress: true,
     pluginRoutesCount: 0,
     pluginRouteErrors: 0,
     pluginRouteFailures: [],
@@ -59,6 +61,28 @@ export async function registerRoutes(
     redisStates: initialRedisStates,
   };
 
+  const handleRedisUpdate = (status: RedisStatus) => {
+    metricsCollector.recordRedisStatus(status);
+    if (!readiness.redisEnabled && status.enabled) {
+      server.log.info({ redis: status }, 'Redis support enabled');
+    }
+    if (readiness.redisConnected !== status.healthy) {
+      const level = status.healthy ? 'info' : 'warn';
+      server.log[level]({ redis: status }, 'Redis health status changed');
+    }
+    const prevStates = readiness.redisStates;
+    if (
+      prevStates.publisher !== (status.roles.publisher ?? null) ||
+      prevStates.subscriber !== (status.roles.subscriber ?? null) ||
+      prevStates.cache !== (status.roles.cache ?? null)
+    ) {
+      server.log.info({ redis: status.roles }, 'Redis role state changed');
+    }
+  };
+
+  if (initialRedisStatus) {
+    handleRedisUpdate(initialRedisStatus);
+  }
   server.kbReadiness = readiness;
 
   const eventHub = server.kbEventHub ?? new EventHub();
@@ -68,6 +92,7 @@ export async function registerRoutes(
     const pluginsSnapshot = metricsCollector.getLastPluginMountSnapshot();
     const redisStatus = cliApi.getRedisStatus?.();
     if (redisStatus) {
+      handleRedisUpdate(redisStatus);
       readiness.redisEnabled = redisStatus.enabled;
       readiness.redisConnected = redisStatus.healthy;
       readiness.redisStates = {
@@ -179,6 +204,8 @@ export async function registerRoutes(
   registerMetricsRoutes(server, config);
 
   await registerPluginRegistry(server, config, cliApi);
+
+  await registerWorkflowRoutes(server, config, cliApi);
 
   await registerEventRoutes(server, basePath, cliApi, readiness, eventHub, config);
 }

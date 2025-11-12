@@ -153,6 +153,32 @@ export function registerMetricsRoutes(
       prometheusLines.push(`kb_plugins_mount_elapsed_ms ${formatNumber(pluginSnapshot.elapsedMs)}`);
     }
 
+    // Redis metrics
+    prometheusLines.push(`# HELP kb_redis_status_updates_total Redis status updates observed`);
+    prometheusLines.push(`# TYPE kb_redis_status_updates_total counter`);
+    prometheusLines.push(`kb_redis_status_updates_total ${metrics.redis.updates}`);
+
+    prometheusLines.push(`# HELP kb_redis_status_transitions_total Redis health transitions`);
+    prometheusLines.push(`# TYPE kb_redis_status_transitions_total counter`);
+    prometheusLines.push(`kb_redis_status_transitions_total{state="healthy"} ${metrics.redis.healthyTransitions}`);
+    prometheusLines.push(`kb_redis_status_transitions_total{state="unhealthy"} ${metrics.redis.unhealthyTransitions}`);
+
+    if (metrics.redis.lastStatus) {
+      const healthyValue = metrics.redis.lastStatus.healthy ? 1 : 0;
+      prometheusLines.push(`# HELP kb_redis_healthy Redis healthy flag (1 = healthy)`);
+      prometheusLines.push(`# TYPE kb_redis_healthy gauge`);
+      prometheusLines.push(`kb_redis_healthy ${healthyValue}`);
+
+      for (const roleEntry of metrics.redis.roleStates) {
+        for (const stateEntry of roleEntry.states) {
+          const safeState = stateEntry.state.replace(/"/g, '\"');
+          prometheusLines.push(
+            `kb_redis_role_state_total{role="${roleEntry.role}",state="${safeState}"} ${stateEntry.count}`,
+          );
+        }
+      }
+    }
+
     // Uptime
     const uptime = (Date.now() - metrics.timestamps.startTime) / 1000;
     prometheusLines.push(`# HELP process_uptime_seconds Process uptime in seconds`);

@@ -3,10 +3,16 @@
  * Fastify plugins registration
  */
 
-import type { FastifyInstance } from 'fastify';
+import type {
+  FastifyInstance,
+  FastifyPluginCallback,
+  FastifyBaseLogger,
+  RawServerDefault,
+  FastifyTypeProviderDefault,
+} from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import cors from '@fastify/cors';
-import rateLimit from '@fastify/rate-limit';
+import fastifyCors, { type FastifyCorsOptions } from '@fastify/cors';
+import fastifyRateLimit, { type RateLimitPluginOptions } from '@fastify/rate-limit';
 
 /**
  * Register all Fastify plugins
@@ -36,15 +42,23 @@ export async function registerPlugins(
       : false; // Disable if not configured
   }
 
-  await server.register(cors, {
+  const corsOptions: FastifyCorsOptions = {
     origin: corsOrigins,
     credentials: config.cors.allowCredentials,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'Idempotency-Key', 'X-Client-Version'],
     exposedHeaders: ['X-Request-Id', 'X-Schema-Version', 'X-RateLimit-Limit', 'X-RateLimit-Remaining', 'Retry-After'],
-    // Add Vary header for proper caching
     preflightContinue: false,
-  });
+  };
+
+  const corsPlugin: FastifyPluginCallback<
+    FastifyCorsOptions,
+    RawServerDefault,
+    FastifyTypeProviderDefault,
+    FastifyBaseLogger
+  > = fastifyCors;
+
+  await server.register(corsPlugin, corsOptions);
 
   // Add Vary: Origin header for CORS caching
   server.addHook('onSend', async (request, reply) => {
@@ -55,7 +69,7 @@ export async function registerPlugins(
 
   // Rate limit plugin
   if (config.rateLimit) {
-    await server.register(rateLimit, {
+    const rateLimitOpts: RateLimitPluginOptions = {
       max: config.rateLimit.max,
       timeWindow: config.rateLimit.timeWindow,
       addHeaders: {
@@ -63,7 +77,16 @@ export async function registerPlugins(
         'x-ratelimit-remaining': true,
         'x-ratelimit-reset': true,
       },
-    });
+    };
+
+    const rateLimitPlugin: FastifyPluginCallback<
+      RateLimitPluginOptions,
+      RawServerDefault,
+      FastifyTypeProviderDefault,
+      FastifyBaseLogger
+    > = fastifyRateLimit;
+
+    await server.register(rateLimitPlugin, rateLimitOpts);
   }
 }
 

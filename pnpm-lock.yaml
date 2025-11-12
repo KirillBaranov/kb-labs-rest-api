@@ -37,7 +37,7 @@ importers:
         version: 6.0.1
       tsup:
         specifier: ^8
-        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)
+        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
       typescript:
         specifier: ^5
         version: 5.9.3
@@ -53,7 +53,7 @@ importers:
     devDependencies:
       '@kb-labs/devkit':
         specifier: github:KirillBaranov/kb-labs-devkit#main
-        version: https://codeload.github.com/KirillBaranov/kb-labs-devkit/tar.gz/5dd910147b8c09742ca13aeb2ea6aba5ffc5159b(@typescript-eslint/parser@8.46.2(eslint@9.38.0)(typescript@5.9.3))(eslint@9.38.0)(tsup@8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3))(typescript-eslint@8.46.2(eslint@9.38.0)(typescript@5.9.3))(typescript@5.9.3)(vitest@3.2.4(@types/node@20.19.24))
+        version: https://codeload.github.com/KirillBaranov/kb-labs-devkit/tar.gz/5dd910147b8c09742ca13aeb2ea6aba5ffc5159b(@typescript-eslint/parser@8.46.2(eslint@9.38.0)(typescript@5.9.3))(eslint@9.38.0)(tsup@8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1))(typescript-eslint@8.46.2(eslint@9.38.0)(typescript@5.9.3))(typescript@5.9.3)(vitest@3.2.4(@types/node@20.19.24))
       '@vitejs/plugin-vue':
         specifier: ^5.0.0
         version: 5.2.4(vite@5.4.21(@types/node@20.19.24))(vue@3.5.22(typescript@5.9.3))
@@ -120,6 +120,9 @@ importers:
       ulid:
         specifier: ^2.3.0
         version: 2.4.0
+      yaml:
+        specifier: ^2.8.0
+        version: 2.8.1
       zod:
         specifier: ^3.22.4
         version: 3.25.76
@@ -132,7 +135,7 @@ importers:
         version: 20.19.24
       tsup:
         specifier: ^8
-        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)
+        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
       tsx:
         specifier: ^4.20.5
         version: 4.20.6
@@ -163,7 +166,7 @@ importers:
         version: 20.19.24
       tsup:
         specifier: ^8
-        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)
+        version: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
       tsx:
         specifier: ^4.20.5
         version: 4.20.6
@@ -2669,6 +2672,11 @@ packages:
     resolution: {integrity: sha512-ICP2e+jsHvAj2E2lIHxa5tjXRlKDJo4IdvPvCXbXQGdzSfmSpNVyIKMvoZHjDY9DP0zV17iI85o90vRFXNccRw==}
     engines: {node: '>=12'}
 
+  yaml@2.8.1:
+    resolution: {integrity: sha512-lcYcMxX2PO9XMGvAJkJ3OsNMw+/7FKes7/hgerGUYWIoWu5j/+YQqcZr5JnPZWzOsEBgMbSbiSTn/dv/69Mkpw==}
+    engines: {node: '>= 14.6'}
+    hasBin: true
+
   yocto-queue@0.1.0:
     resolution: {integrity: sha512-rVksvsnNCdJ/ohGc6xgPwyN8eheCxsiLM8mxuE/t/mOVqJewPuO1miLpTHQiRgTKCLexL4MeAFVagts7HmNZ2Q==}
     engines: {node: '>=10'}
@@ -2976,12 +2984,12 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@kb-labs/devkit@https://codeload.github.com/KirillBaranov/kb-labs-devkit/tar.gz/5dd910147b8c09742ca13aeb2ea6aba5ffc5159b(@typescript-eslint/parser@8.46.2(eslint@9.38.0)(typescript@5.9.3))(eslint@9.38.0)(tsup@8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3))(typescript-eslint@8.46.2(eslint@9.38.0)(typescript@5.9.3))(typescript@5.9.3)(vitest@3.2.4(@types/node@20.19.24))':
+  '@kb-labs/devkit@https://codeload.github.com/KirillBaranov/kb-labs-devkit/tar.gz/5dd910147b8c09742ca13aeb2ea6aba5ffc5159b(@typescript-eslint/parser@8.46.2(eslint@9.38.0)(typescript@5.9.3))(eslint@9.38.0)(tsup@8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1))(typescript-eslint@8.46.2(eslint@9.38.0)(typescript@5.9.3))(typescript@5.9.3)(vitest@3.2.4(@types/node@20.19.24))':
     dependencies:
       eslint: 9.38.0
       eslint-import-resolver-typescript: 3.10.1(eslint-plugin-import@2.32.0)(eslint@9.38.0)
       eslint-plugin-import: 2.32.0(@typescript-eslint/parser@8.46.2(eslint@9.38.0)(typescript@5.9.3))(eslint-import-resolver-typescript@3.10.1)(eslint@9.38.0)
-      tsup: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)
+      tsup: 8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1)
       typescript: 5.9.3
       typescript-eslint: 8.46.2(eslint@9.38.0)(typescript@5.9.3)
       vitest: 3.2.4(@types/node@20.19.24)
@@ -4659,12 +4667,13 @@ snapshots:
 
   possible-typed-array-names@1.1.0: {}
 
-  postcss-load-config@6.0.1(postcss@8.5.6)(tsx@4.20.6):
+  postcss-load-config@6.0.1(postcss@8.5.6)(tsx@4.20.6)(yaml@2.8.1):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       postcss: 8.5.6
       tsx: 4.20.6
+      yaml: 2.8.1
 
   postcss-selector-parser@6.1.2:
     dependencies:
@@ -5050,7 +5059,7 @@ snapshots:
   tslib@2.8.1:
     optional: true
 
-  tsup@8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3):
+  tsup@8.5.0(postcss@8.5.6)(tsx@4.20.6)(typescript@5.9.3)(yaml@2.8.1):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.25.11)
       cac: 6.7.14
@@ -5061,7 +5070,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.5.6)(tsx@4.20.6)
+      postcss-load-config: 6.0.1(postcss@8.5.6)(tsx@4.20.6)(yaml@2.8.1)
       resolve-from: 5.0.0
       rollup: 4.52.5
       source-map: 0.8.0-beta.0
@@ -5340,6 +5349,8 @@ snapshots:
   wrappy@1.0.2: {}
 
   xml-name-validator@4.0.0: {}
+
+  yaml@2.8.1: {}
 
   yocto-queue@0.1.0: {}
 

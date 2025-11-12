@@ -1,18 +1,10 @@
 {
-  "extends": "@kb-labs/devkit/tsconfig/node.json",
+  "extends": "../../tsconfig.base.json",
   "include": [
     "src"
   ],
   "compilerOptions": {
-    "noEmit": true,
-    "moduleResolution": "node",
-    "module": "ESNext",
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "baseUrl": ".",
-    "paths": {
-      "@kb-labs/cli-api": ["../../../kb-labs-cli/packages/cli-api/src/index.ts"]
-    }
+    "noEmit": true
   }
 }
 

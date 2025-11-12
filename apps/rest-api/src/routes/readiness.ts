@@ -48,7 +48,8 @@ export function isReady(readiness: ReadinessState): boolean {
     readiness.cliApiInitialized &&
     readiness.registryLoaded &&
     !readiness.registryPartial &&
-    !readiness.registryStale
+    !readiness.registryStale &&
+    (!readiness.redisEnabled || readiness.redisConnected)
   );
 }
 

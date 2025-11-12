@@ -257,7 +257,7 @@ describe('registerHealthRoutes', () => {
         stale: false,
         source: { cliVersion: 'test', cwd: process.cwd() },
         corrupted: false,
-        plugins: [],
+        plugins: [{ id: '@kb-labs/demo' }],
       })),
       getRedisStatus: vi.fn(() => ({
         enabled: true,
@@ -277,7 +277,7 @@ describe('registerHealthRoutes', () => {
     expect(response.json()).toMatchObject({
       schema: 'kb.ready/1',
       ready: false,
-      status: 'degraded',
+      status: 'initializing',
       reason: 'redis_unavailable',
       components: {
         redis: {
@@ -328,7 +328,7 @@ describe('registerHealthRoutes', () => {
         stale: false,
         source: { cliVersion: 'test', cwd: process.cwd() },
         corrupted: false,
-        plugins: [],
+        plugins: [{ id: '@kb-labs/demo' }],
       })),
     } as unknown as CliAPI;
 
@@ -339,7 +339,7 @@ describe('registerHealthRoutes', () => {
     expect(response.json()).toMatchObject({
       schema: 'kb.ready/1',
       ready: false,
-      status: 'degraded',
+      status: 'initializing',
       reason: 'redis_unavailable',
       components: {
         redis: {

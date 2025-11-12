@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyInstance } from 'fastify';
+import type { RedisStatus } from '@kb-labs/cli-api';
 
 /**
  * @module @kb-labs/rest-api-app/middleware/metrics
@@ -9,6 +10,23 @@ import type { FastifyInstance } from 'fastify';
 /**
  * Metrics data
  */
+type RedisRole = 'publisher' | 'subscriber' | 'cache';
+
+interface RedisMetrics {
+  updates: number;
+  healthyTransitions: number;
+  unhealthyTransitions: number;
+  lastUpdateTs: number | null;
+  lastHealthyTs: number | null;
+  lastUnhealthyTs: number | null;
+  lastStatus: {
+    enabled: boolean;
+    healthy: boolean;
+    roles: Record<RedisRole, string | null>;
+  } | null;
+  roleStates: Record<RedisRole, Record<string, number>>;
+}
+
 interface Metrics {
   requests: {
     total: number;
@@ -41,6 +59,7 @@ interface Metrics {
     dryRunDecisions: number;
     byPlugin: Record<string, HeaderPluginMetrics>;
   };
+  redis: RedisMetrics;
 }
 
 type RouteLatencyStats = {
@@ -174,6 +193,23 @@ interface MetricsSnapshot {
       sensitiveInbound: number;
     }>;
   };
+  redis: {
+    updates: number;
+    healthyTransitions: number;
+    unhealthyTransitions: number;
+    lastUpdateTs: number | null;
+    lastHealthyTs: number | null;
+    lastUnhealthyTs: number | null;
+    lastStatus: {
+      enabled: boolean;
+      healthy: boolean;
+      roles: Record<RedisRole, string | null>;
+    } | null;
+    roleStates: Array<{
+      role: RedisRole;
+      states: Array<{ state: string; count: number }>;
+    }>;
+  };
 }
 
 class MetricsCollector {
@@ -204,7 +240,7 @@ class MetricsCollector {
       },
       timestamps: {
         startTime: Date.now(),
-        lastRequest: 0,
+        lastRequest: Date.now(),
       },
       headers: {
         filteredInbound: 0,
@@ -214,6 +250,24 @@ class MetricsCollector {
         varyApplied: 0,
         dryRunDecisions: 0,
         byPlugin: {},
+      },
+      redis: this.createRedisMetrics(),
+    };
+  }
+
+  private createRedisMetrics(): RedisMetrics {
+    return {
+      updates: 0,
+      healthyTransitions: 0,
+      unhealthyTransitions: 0,
+      lastUpdateTs: null,
+      lastHealthyTs: null,
+      lastUnhealthyTs: null,
+      lastStatus: null,
+      roleStates: {
+        publisher: {},
+        subscriber: {},
+        cache: {},
       },
     };
   }
@@ -275,6 +329,50 @@ class MetricsCollector {
     }
   }
 
+  recordRedisStatus(status: RedisStatus | null): void {
+    if (!status) {
+      return;
+    }
+    const now = Date.now();
+    const redisMetrics = this.metrics.redis;
+    const previous = redisMetrics.lastStatus;
+
+    redisMetrics.updates += 1;
+    redisMetrics.lastUpdateTs = now;
+    if (status.healthy) {
+      redisMetrics.lastHealthyTs = now;
+    } else {
+      redisMetrics.lastUnhealthyTs = now;
+    }
+
+    if (previous && previous.healthy !== status.healthy) {
+      if (status.healthy) {
+        redisMetrics.healthyTransitions += 1;
+      } else {
+        redisMetrics.unhealthyTransitions += 1;
+      }
+    }
+
+    const normalizedRoles: Record<RedisRole, string | null> = {
+      publisher: status.roles.publisher ?? null,
+      subscriber: status.roles.subscriber ?? null,
+      cache: status.roles.cache ?? null,
+    };
+
+    (Object.keys(normalizedRoles) as RedisRole[]).forEach((role) => {
+      const state = normalizedRoles[role] ?? 'unknown';
+      const bucket = state ?? 'unknown';
+      redisMetrics.roleStates[role][bucket] =
+        (redisMetrics.roleStates[role][bucket] ?? 0) + 1;
+    });
+
+    redisMetrics.lastStatus = {
+      enabled: status.enabled,
+      healthy: status.healthy,
+      roles: normalizedRoles,
+    };
+  }
+
   getMetrics(): MetricsSnapshot {
     const avg = this.metrics.latency.count > 0
       ? this.metrics.latency.total / this.metrics.latency.count
@@ -331,6 +429,22 @@ class MetricsCollector {
       sensitiveInbound: data.sensitiveInbound,
     }));
 
+    const redisRoleStates = (Object.keys(this.metrics.redis.roleStates) as RedisRole[]).map((role) => ({
+      role,
+      states: Object.entries(this.metrics.redis.roleStates[role]).map(([state, count]) => ({
+        state,
+        count,
+      })),
+    }));
+
+    const lastRedisStatus = this.metrics.redis.lastStatus
+      ? {
+          enabled: this.metrics.redis.lastStatus.enabled,
+          healthy: this.metrics.redis.lastStatus.healthy,
+          roles: { ...this.metrics.redis.lastStatus.roles },
+        }
+      : null;
+
     return {
       requests: { ...this.metrics.requests },
       latency: {
@@ -352,6 +466,16 @@ class MetricsCollector {
         varyApplied: this.metrics.headers.varyApplied,
         dryRunDecisions: this.metrics.headers.dryRunDecisions,
         perPlugin: headerPerPlugin,
+      },
+      redis: {
+        updates: this.metrics.redis.updates,
+        healthyTransitions: this.metrics.redis.healthyTransitions,
+        unhealthyTransitions: this.metrics.redis.unhealthyTransitions,
+        lastUpdateTs: this.metrics.redis.lastUpdateTs,
+        lastHealthyTs: this.metrics.redis.lastHealthyTs,
+        lastUnhealthyTs: this.metrics.redis.lastUnhealthyTs,
+        lastStatus: lastRedisStatus,
+        roleStates: redisRoleStates,
       },
     };
   }
