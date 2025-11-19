@@ -157,24 +157,48 @@ export async function registerRoutes(
     }
   };
 
-  let mountPromise = runMount()
-    .then(() => {
-      server.log.info('Plugin route mounting completed');
-    })
-    .catch(error => {
-      server.log.error(
-        { err: error },
-        'Plugin route mounting failed'
-      );
-    });
+  // Initial mount - wait for completion before server starts listening
+  server.log.info('Starting initial plugin route mounting');
+  try {
+    await runMount();
+    server.log.info('Plugin route mounting completed');
+  } catch (error) {
+    server.log.error(
+      { err: error },
+      'Plugin route mounting failed'
+    );
+  }
 
-  (server as any).kbPluginMountPromise = mountPromise;
+  // Create a resolved promise for initial mount (already completed)
+  let mountPromise = Promise.resolve();
 
   const scheduleRemount = (): void => {
+    // Check if server is already listening - Fastify doesn't allow adding routes after listen()
+    // Check both Fastify's listening property and underlying Node.js server
+    const isListening = (server as any).listening || 
+                       (server.server && (server.server as any).listening);
+    
+    if (isListening) {
+      server.log.warn(
+        'Cannot remount plugin routes: server is already listening. Restart required.'
+      );
+      return;
+    }
+
     readiness.pluginMountInProgress = true;
     mountPromise = mountPromise
       .catch(() => void 0)
       .then(async () => {
+        // Double-check server is not listening before remount
+        const stillListening = (server as any).listening || 
+                               (server.server && (server.server as any).listening);
+        
+        if (stillListening) {
+          server.log.warn(
+            'Cannot remount plugin routes: server started listening during remount. Restart required.'
+          );
+          return;
+        }
         server.log.info('Registry change detected, remounting plugin routes');
         await runMount();
       })

@@ -10,27 +10,54 @@ import { createCliAPI } from '@kb-labs/cli-api';
 import { setCliApi, disposeCliApi } from './plugins/cli-discovery.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { initRestLogging, createRestLogger } from './logging.js';
+import { initLogging } from '@kb-labs/core-sys/logging/init';
+import { getLogger } from '@kb-labs/core-sys/logging';
 import type { LogLevel } from '@kb-labs/core-sys';
 import { randomUUID } from 'node:crypto';
 
 /**
- * Find monorepo root (prefer pnpm-workspace.yaml or .git over package.json)
- * Looks for the topmost directory with both .git and pnpm-workspace.yaml
+ * Find monorepo root (prefer pnpm-workspace.yaml with kb-* patterns)
+ * Looks for the topmost directory with pnpm-workspace.yaml that includes kb-* patterns
  */
 async function findMonorepoRoot(startDir: string): Promise<string> {
   let dir = path.resolve(startDir);
-  let foundRoot: string | null = null;
+  let monorepoRoot: string | null = null;
   
-  // Walk up the directory tree to find the topmost directory with both .git and pnpm-workspace.yaml
-  // This ensures we find the main monorepo root, not a sub-workspace
+  // First, try to find workspace with kb-* patterns (the actual monorepo root)
+  while (true) {
+    try {
+      const workspacePath = path.join(dir, 'pnpm-workspace.yaml');
+      await fs.access(workspacePath);
+      const content = await fs.readFile(workspacePath, 'utf-8');
+      if (content.includes('kb-*')) {
+        // Found the monorepo root with kb-* patterns
+        monorepoRoot = dir;
+        break;
+      }
+    } catch {
+      // Continue
+    }
+    
+    const parent = path.dirname(dir);
+    if (parent === dir) {
+      break;
+    }
+    dir = parent;
+  }
+  
+  if (monorepoRoot) {
+    return monorepoRoot;
+  }
+  
+  // Fallback: try to find the topmost directory with both .git and pnpm-workspace.yaml
+  dir = path.resolve(startDir);
+  let foundRoot: string | null = null;
   while (true) {
     try {
       const hasGit = await fs.access(path.join(dir, '.git')).then(() => true).catch(() => false);
       const hasWorkspace = await fs.access(path.join(dir, 'pnpm-workspace.yaml')).then(() => true).catch(() => false);
       
       if (hasGit && hasWorkspace) {
-        // Found a root with both markers, save it and continue up to find the topmost one
         foundRoot = dir;
       }
     } catch {
@@ -39,18 +66,16 @@ async function findMonorepoRoot(startDir: string): Promise<string> {
     
     const parent = path.dirname(dir);
     if (parent === dir) {
-      // Reached filesystem root, stop here
       break;
     }
     dir = parent;
   }
   
-  // If we found a root with both .git and pnpm-workspace.yaml, use it (it's the topmost one)
   if (foundRoot) {
     return foundRoot;
   }
   
-  // Fallback: try to find the topmost directory with pnpm-workspace.yaml (walking up)
+  // Final fallback: try to find any pnpm-workspace.yaml
   dir = path.resolve(startDir);
   let topmostWorkspace: string | null = null;
   while (true) {
@@ -81,10 +106,19 @@ async function findMonorepoRoot(startDir: string): Promise<string> {
  */
 export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   const logLevel = resolveLogLevel(process.env.REST_LOG_LEVEL);
-  initRestLogging(logLevel);
-  const bootstrapLogger = createRestLogger('bootstrap', {
-    traceId: randomUUID(),
-    reqId: 'rest-bootstrap',
+  
+  // Initialize logging with unified system
+  initLogging({
+    level: logLevel,
+    mode: 'json', // REST API uses JSON output
+  });
+  
+  const bootstrapLogger = getLogger('rest:bootstrap').child({
+    meta: {
+      layer: 'rest',
+      traceId: randomUUID(),
+      reqId: 'rest-bootstrap',
+    },
   });
 
   // Load configuration
@@ -100,17 +134,39 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     }
   }
 
-  // Detect repo root (prefer monorepo root)
+  // Detect repo root (prefer monorepo root with kb-* patterns)
   const repoRoot = await findMonorepoRoot(cwd);
-  bootstrapLogger.debug('Resolved repo root', { cwd, repoRoot });
+  bootstrapLogger.info('Resolved repo root', { cwd, repoRoot });
 
   // Initialize CLI API singleton
   bootstrapLogger.info('Initializing CLI API');
   const redisConfig = config.redis;
+  
+  // Collect all kb-labs-* directories as roots for discovery
+  // CLI API will scan these roots using workspace strategy
+  const discoveryRoots = [repoRoot];
+  try {
+    const entries = await fs.readdir(repoRoot, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.startsWith('kb-labs-')) {
+        const repoPath = path.join(repoRoot, entry.name);
+        discoveryRoots.push(repoPath);
+      }
+    }
+    bootstrapLogger.info('Discovery roots configured', { 
+      roots: discoveryRoots,
+      rootsCount: discoveryRoots.length,
+    });
+  } catch (error) {
+    bootstrapLogger.warn('Failed to collect discovery roots', { 
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  
   const cliApi = await createCliAPI({
     discovery: {
       strategies: ['workspace', 'pkg', 'dir', 'file'],
-      roots: [repoRoot],
+      roots: discoveryRoots,
       allowDowngrade: false,
     },
     cache: {
@@ -121,7 +177,8 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
       level: logLevel,
     },
     snapshot: {
-      mode: 'consumer',
+      mode: 'producer', // REST API should produce snapshots, not consume them
+      refreshIntervalMs: 60_000,
     },
     pubsub: redisConfig
       ? {
@@ -129,6 +186,17 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
           namespace: redisConfig.namespace,
         }
       : undefined,
+  });
+  
+  // Initialize CLI API (discovers plugins)
+  bootstrapLogger.info('Initializing CLI API discovery');
+  await cliApi.initialize();
+  
+  // Log discovered plugins
+  const plugins = await cliApi.listPlugins();
+  bootstrapLogger.info('CLI API discovery complete', {
+    pluginsFound: plugins.length,
+    pluginIds: plugins.map(p => `${p.id}@${p.version}`),
   });
   
   // Set singleton for cli-discovery
@@ -144,6 +212,8 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   });
 
   // Create server with cliApi
+  // Note: registerRoutes() now waits for initial plugin route mounting to complete
+  // before returning, so routes are already mounted when createServer() returns
   const server = await createServer(config, repoRoot, cliApi);
 
   // Start server

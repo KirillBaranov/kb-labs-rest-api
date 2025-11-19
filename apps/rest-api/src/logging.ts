@@ -1,11 +1,15 @@
-import {
-  configureLogger,
-  getLogger,
-  setLogLevel,
-  jsonSink,
-  type LogLevel,
-  type Logger as CoreLogger,
-} from '@kb-labs/core-sys';
+/**
+ * @module @kb-labs/rest-api-app/logging
+ * Logging utilities for REST API - re-exports from unified logging system
+ * 
+ * @deprecated Use getLogger() from @kb-labs/core-sys/logging directly
+ * This file is kept for backward compatibility
+ */
+
+import { getLogger, type Logger } from '@kb-labs/core-sys/logging';
+
+// Re-export for convenience
+export { getLogger, type LogLevel } from '@kb-labs/core-sys/logging';
 
 type Fields = Record<string, unknown>;
 
@@ -16,20 +20,16 @@ export interface RestLogger {
   error(message: string, fields?: Fields | Error): void;
 }
 
-let configured = false;
-
-export function initRestLogging(level: LogLevel = 'info'): void {
-  if (!configured) {
-    configureLogger({
-      level,
-      sinks: [jsonSink],
-    });
-    configured = true;
-    return;
-  }
-  setLogLevel(level);
+/**
+ * @deprecated Use initLogging() from @kb-labs/core-sys/logging/init instead
+ */
+export function initRestLogging(_level: string = 'info'): void {
+  // No-op - logging is initialized globally via initLogging()
 }
 
+/**
+ * @deprecated Use getLogger() from @kb-labs/core-sys/logging directly
+ */
 export function createRestLogger(
   scope: string,
   context: Fields = {}
@@ -41,26 +41,22 @@ export function createRestLogger(
     },
   });
 
-  return wrap(coreLogger);
-}
-
-function wrap(core: CoreLogger): RestLogger {
   return {
     debug(message, fields) {
-      core.debug(message, fields);
+      coreLogger.debug(message, fields);
     },
     info(message, fields) {
-      core.info(message, fields);
+      coreLogger.info(message, fields);
     },
     warn(message, fields) {
-      core.warn(message, fields);
+      coreLogger.warn(message, fields);
     },
     error(message, fields) {
       if (fields instanceof Error) {
-        core.error(message, fields);
+        coreLogger.error(message, fields);
         return;
       }
-      core.error(message, fields);
+      coreLogger.error(message, fields);
     },
   };
 }

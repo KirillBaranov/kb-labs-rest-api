@@ -10,6 +10,7 @@ import {
   migrateV1ToV2,
 } from '@kb-labs/plugin-manifest';
 import { getDeprecationWarning } from '@kb-labs/plugin-manifest';
+import { getLogger } from '@kb-labs/core-sys/logging';
 import { promises as fsp } from 'node:fs';
 import * as path from 'node:path';
 
@@ -38,24 +39,29 @@ export interface DiscoveredPlugin {
 export async function discoverPlugins(
   startDir = process.cwd()
 ): Promise<DiscoveredPlugin[]> {
-  console.log(`[DEBUG] discoverPlugins: startDir=${startDir}`);
+  const logger = getLogger('rest:discovery');
+  logger.debug('discoverPlugins started', { startDir });
   const plugins: DiscoveredPlugin[] = [];
 
   // 1. Check package.json.kbLabs.manifest
   const pkgPath = await findNearestPackageJson(startDir);
-  console.log(`[DEBUG] Nearest package.json: ${pkgPath || 'not found'}`);
+  logger.debug('Nearest package.json', { pkgPath: pkgPath || 'not found' });
   if (pkgPath) {
     try {
       const raw = await fsp.readFile(pkgPath, 'utf8');
       const pkg = JSON.parse(raw) as any;
-      console.log(`[DEBUG] package.json.kbLabs: ${JSON.stringify(pkg?.kbLabs || null)}`);
+      logger.debug('package.json.kbLabs', { kbLabs: pkg?.kbLabs || null });
       const manifestPath = pkg?.kbLabs?.manifest;
       if (manifestPath) {
         const plugin = await loadPlugin(manifestPath, path.dirname(pkgPath));
         if (plugin) {
           plugins.push(plugin);
           const manifestId = (plugin.manifest as any).id || plugin.packageName;
-          console.log(`[DEBUG] Discovered plugin from package.json.kbLabs.manifest: ${manifestId} (${plugin.version}) at ${plugin.manifestPath}`);
+          logger.debug('Discovered plugin from package.json.kbLabs.manifest', { 
+            manifestId, 
+            version: plugin.version, 
+            manifestPath: plugin.manifestPath 
+          });
         }
       }
 
@@ -67,7 +73,11 @@ export async function discoverPlugins(
           if (plugin) {
             plugins.push(plugin);
             const manifestId = (plugin.manifest as any).id || plugin.packageName;
-            console.log(`[DEBUG] Discovered plugin from kbLabs.plugins array: ${manifestId} (${plugin.version}) at ${plugin.manifestPath}`);
+            logger.debug('Discovered plugin from kbLabs.plugins array', { 
+              manifestId, 
+              version: plugin.version, 
+              manifestPath: plugin.manifestPath 
+            });
           }
         }
       }
@@ -87,16 +97,20 @@ export async function discoverPlugins(
         if (plugin) {
           plugins.push(plugin);
           const manifestId = (plugin.manifest as any).id || plugin.packageName;
-          console.log(`[DEBUG] Discovered plugin from .kblabs/plugins/: ${manifestId} (${plugin.version}) at ${plugin.manifestPath}`);
+          logger.debug('Discovered plugin from .kblabs/plugins/', { 
+            manifestId, 
+            version: plugin.version, 
+            manifestPath: plugin.manifestPath 
+          });
         }
       }
     }
   } catch {
     // .kblabs/plugins/ doesn't exist
-    console.log(`[DEBUG] .kblabs/plugins/ directory not found at ${pluginsDir}`);
+    logger.debug('.kblabs/plugins/ directory not found', { pluginsDir });
   }
 
-  console.log(`[DEBUG] Total plugins discovered: ${plugins.length}`);
+  logger.debug('Total plugins discovered', { count: plugins.length });
   return plugins;
 }
 

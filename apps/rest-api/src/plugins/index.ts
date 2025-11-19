@@ -46,7 +46,14 @@ export async function registerPlugins(
     origin: corsOrigins,
     credentials: config.cors.allowCredentials,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'HEAD'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-Id', 'Idempotency-Key', 'X-Client-Version'],
+    allowedHeaders: [
+      'Content-Type', 
+      'Authorization', 
+      'X-Request-Id', 
+      'X-Trace-Id',  // Added for Studio widget tracing
+      'Idempotency-Key', 
+      'X-Client-Version'
+    ],
     exposedHeaders: ['X-Request-Id', 'X-Schema-Version', 'X-RateLimit-Limit', 'X-RateLimit-Remaining', 'Retry-After'],
     preflightContinue: false,
   };

@@ -41,6 +41,7 @@ export async function registerPluginRoutes(
   readiness?: ReadinessState
 ): Promise<void> {
   const gatewayTimeoutMs = config.timeouts?.requestTimeout ?? 30_000;
+  // Stats will be computed from mount results to avoid race conditions in parallel execution
   const stats = {
     mountedRoutes: 0,
     errors: 0,
@@ -86,128 +87,215 @@ export async function registerPluginRoutes(
       }, 'Registry snapshot is partial or stale');
     }
 
-    for (const entry of manifests) {
-      const { manifest, pluginRoot } = entry;
+    // Prepare mount tasks for parallel execution
+    const mountTasks = manifests
+      .filter(entry => entry.manifest.rest?.routes && entry.manifest.rest.routes.length > 0)
+      .map(async (entry) => {
+        const { manifest, pluginRoot } = entry;
 
-      if (!manifest.rest?.routes || manifest.rest.routes.length === 0) {
-        continue;
-      }
+        // Validate routes first (synchronous checks)
+        const restValidationErrors: string[] = [];
+        if (manifest.rest?.routes) {
+          const manifestDir = pluginRoot;
+          const fs = await import('fs/promises');
+          for (const route of manifest.rest.routes) {
+            const handlerRef = route.handler;
+            const [handlerFile, exportName] = handlerRef.split('#');
 
-      const restValidationErrors: string[] = [];
-      if (manifest.rest?.routes) {
-        const manifestDir = pluginRoot;
-        const fs = await import('fs/promises');
-        for (const route of manifest.rest.routes) {
-          const handlerRef = route.handler;
-          const [handlerFile, exportName] = handlerRef.split('#');
-
-          if (!exportName || !handlerFile) {
-            restValidationErrors.push(
-              `Route ${route.method} ${route.path}: Invalid handler reference "${handlerRef}" (must include export name)`
-            );
-            continue;
-          }
-
-          const handlerPath = path.resolve(manifestDir, handlerFile);
-          try {
-            await fs.access(handlerPath);
-          } catch {
-            restValidationErrors.push(
-              `Route ${route.method} ${route.path}: Handler file not found: ${handlerPath}`
-            );
-          }
-        }
-      }
-
-      if (restValidationErrors.length > 0) {
-        server.log.error({
-          plugin: `${manifest.id}@${manifest.version}`,
-          pluginRoot,
-          remediation: 'Verify REST handler file and export exist',
-          errors: restValidationErrors,
-        }, 'REST validation failed, skipping routes');
-        stats.errors += 1;
-        if (readiness) {
-          readiness.pluginRouteFailures.push({
-            id: manifest.id,
-            error: summarizeValidationErrors(restValidationErrors),
-          });
-        }
-        continue;
-      }
-
-      try {
-        const start = performance.now();
-        const pluginBasePath = manifest.rest?.basePath
-          ? manifest.rest.basePath.replace(/^\/v1/, config.basePath)
-          : `${config.basePath}/plugins/${manifest.id}`;
-
-        server.log.info({
-          plugin: `${manifest.id}@${manifest.version}`,
-          configBasePath: config.basePath,
-          manifestBasePath: manifest.rest?.basePath,
-          pluginBasePath,
-          pluginRoot,
-          routes: manifest.rest?.routes?.length ?? 0,
-        }, 'Mounting plugin routes');
-
-        await mountRoutes(
-          server as any,
-          manifest,
-          {
-            execute: runtimeExecute as any,
-          },
-          {
-            grantedCapabilities: (() => {
-              if (!config.plugins) {
-                return [];
-              }
-              if (Array.isArray(config.plugins)) {
-                return config.plugins as string[];
-              }
-              if (typeof config.plugins === 'object' && 'grantedCapabilities' in config.plugins) {
-                const gc = (config.plugins as { grantedCapabilities?: unknown }).grantedCapabilities;
-                return Array.isArray(gc) ? (gc as string[]) : [];
-              }
-              return [];
-            })(),
-            basePath: pluginBasePath,
-            pluginRoot,
-            workdir: workspaceRoot,
-            fallbackTimeoutMs: gatewayTimeoutMs,
-            rateLimit: config.rateLimit,
-            onRouteMounted: info => {
-              metricsCollector.registerRouteBudget(
-                info.method,
-                info.path,
-                info.timeoutMs,
-                manifest.id
+            if (!exportName || !handlerFile) {
+              restValidationErrors.push(
+                `Route ${route.method} ${route.path}: Invalid handler reference "${handlerRef}" (must include export name)`
               );
-            },
+              continue;
+            }
+
+            const handlerPath = path.resolve(manifestDir, handlerFile);
+            try {
+              await fs.access(handlerPath);
+            } catch {
+              restValidationErrors.push(
+                `Route ${route.method} ${route.path}: Handler file not found: ${handlerPath}`
+              );
+            }
           }
-        );
-        const duration = performance.now() - start;
-        mountMetrics.recordSuccess(manifest.id, manifest.rest?.routes?.length ?? 0, duration);
-        server.log.info({
-          plugin: `${manifest.id}@${manifest.version}`,
-          durationMs: Number(duration.toFixed(2)),
-        }, 'Successfully mounted plugin routes');
-        stats.mountedRoutes += manifest.rest?.routes?.length ?? 0;
-      } catch (error) {
-        mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
-        server.log.error({
-          plugin: manifest.id,
-          err: error instanceof Error ? error : new Error(String(error)),
-        }, 'Failed to mount plugin routes');
-        stats.errors += 1;
+        }
+
+        if (restValidationErrors.length > 0) {
+          server.log.warn({
+            plugin: `${manifest.id}@${manifest.version}`,
+            pluginRoot,
+            remediation: 'Verify REST handler file and export exist',
+            errors: restValidationErrors,
+          }, 'REST validation errors found, will skip problematic routes but continue mounting others');
+          // Filter out routes with validation errors
+          const errorPaths = new Set(restValidationErrors.map((error) => {
+            const match = error.match(/Route\s+(\w+)\s+([^\s:]+)/);
+            return match ? `${match[1]} ${match[2]}` : null;
+          }).filter(Boolean));
+          
+          const validRoutes = manifest.rest.routes.filter((route) => {
+            const routeKey = `${route.method} ${route.path}`;
+            return !errorPaths.has(routeKey);
+          });
+          
+          if (validRoutes.length === 0) {
+            server.log.error({
+              plugin: `${manifest.id}@${manifest.version}`,
+              pluginRoot,
+              errors: restValidationErrors,
+            }, 'All routes failed validation, skipping plugin');
+            return { 
+              success: false, 
+              pluginId: manifest.id,
+              error: true,
+              routesCount: 0,
+              failureError: summarizeValidationErrors(restValidationErrors),
+            };
+          }
+          
+          // Replace routes with only valid ones
+          manifest.rest.routes = validRoutes;
+          server.log.info({
+            plugin: `${manifest.id}@${manifest.version}`,
+            totalRoutes: manifest.rest.routes.length + restValidationErrors.length,
+            validRoutes: validRoutes.length,
+            skippedRoutes: restValidationErrors.length,
+          }, 'Filtered routes, mounting valid ones');
+        }
+
+        try {
+          const start = performance.now();
+          const pluginBasePath = manifest.rest?.basePath
+            ? manifest.rest.basePath.replace(/^\/v1/, config.basePath)
+            : `${config.basePath}/plugins/${manifest.id}`;
+
+          server.log.info({
+            plugin: `${manifest.id}@${manifest.version}`,
+            configBasePath: config.basePath,
+            manifestBasePath: manifest.rest?.basePath,
+            pluginBasePath,
+            pluginRoot,
+            routes: manifest.rest?.routes?.length ?? 0,
+          }, 'Mounting plugin routes');
+
+          await mountRoutes(
+            server as any,
+            manifest,
+            {
+              execute: runtimeExecute as any,
+            },
+            {
+              grantedCapabilities: (() => {
+                if (!config.plugins) {
+                  return [];
+                }
+                if (Array.isArray(config.plugins)) {
+                  return config.plugins as string[];
+                }
+                if (typeof config.plugins === 'object' && 'grantedCapabilities' in config.plugins) {
+                  const gc = (config.plugins as { grantedCapabilities?: unknown }).grantedCapabilities;
+                  return Array.isArray(gc) ? (gc as string[]) : [];
+                }
+                return [];
+              })(),
+              basePath: pluginBasePath,
+              pluginRoot,
+              workdir: workspaceRoot,
+              fallbackTimeoutMs: gatewayTimeoutMs,
+              rateLimit: config.rateLimit,
+              onRouteMounted: info => {
+                metricsCollector.registerRouteBudget(
+                  info.method,
+                  info.path,
+                  info.timeoutMs,
+                  manifest.id
+                );
+              },
+            }
+          );
+          const duration = performance.now() - start;
+          const routesCount = manifest.rest?.routes?.length ?? 0;
+          mountMetrics.recordSuccess(manifest.id, routesCount, duration);
+          server.log.info({
+            plugin: `${manifest.id}@${manifest.version}`,
+            durationMs: Number(duration.toFixed(2)),
+          }, 'Successfully mounted plugin routes');
+          return { 
+            success: true, 
+            pluginId: manifest.id,
+            error: false,
+            routesCount,
+          };
+        } catch (error) {
+          mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
+          server.log.error({
+            plugin: manifest.id,
+            err: error instanceof Error ? error : new Error(String(error)),
+          }, 'Failed to mount plugin routes');
+          return { 
+            success: false, 
+            pluginId: manifest.id,
+            error: true,
+            routesCount: 0,
+            failureError: `rest_mount_failed ${shortErrorMessage(error)}`,
+          };
+        }
+      });
+
+    // Execute all mount tasks in parallel
+    // Use allSettled to ensure all plugins are processed even if some fail
+    const results = await Promise.allSettled(mountTasks);
+    
+    // Aggregate stats from results (avoid race conditions)
+    let mountedRoutes = 0;
+    let errors = 0;
+    const succeeded: string[] = [];
+    const failed: string[] = [];
+    const routeFailures: Array<{ id: string; error: string }> = [];
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled') {
+        const value = result.value;
+        if (value.success) {
+          mountedRoutes += value.routesCount ?? 0;
+          succeeded.push(value.pluginId);
+        } else {
+          errors += 1;
+          failed.push(value.pluginId);
+          if (value.failureError && readiness) {
+            routeFailures.push({
+              id: value.pluginId,
+              error: value.failureError,
+            });
+          }
+        }
+      } else {
+        errors += 1;
+        failed.push('unknown');
         if (readiness) {
-          readiness.pluginRouteFailures.push({
-            id: manifest.id,
-            error: `rest_mount_failed ${shortErrorMessage(error)}`,
+          routeFailures.push({
+            id: 'unknown',
+            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
           });
         }
       }
     }
+    
+    // Update stats and readiness (safely, after all parallel operations complete)
+    stats.mountedRoutes = mountedRoutes;
+    stats.errors = errors;
+    if (readiness) {
+      readiness.pluginRouteFailures = routeFailures;
+    }
+    
+    // Log summary
+    server.log.info({
+      total: mountTasks.length,
+      succeeded: succeeded.length,
+      failed: failed.length,
+      mountedRoutes,
+      errors,
+    }, 'Parallel plugin route mounting completed');
   } catch (error) {
     server.log.error({
       err: error instanceof Error ? error : new Error(String(error)),
@@ -310,3 +398,4 @@ function shortErrorMessage(error: unknown): string {
   const firstLine = message.trim().split('\n')[0] ?? message.trim();
   return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
 }
+

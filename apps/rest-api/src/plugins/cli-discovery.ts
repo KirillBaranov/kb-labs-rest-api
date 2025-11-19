@@ -5,6 +5,7 @@
 
 import type { ManifestV2 } from '@kb-labs/plugin-manifest';
 import type { CliAPI } from '@kb-labs/cli-api';
+import { getLogger } from '@kb-labs/core-sys/logging';
 import * as path from 'node:path';
 
 /**
@@ -44,15 +45,18 @@ export async function discoverPluginsViaCli(
       throw new Error('CliAPI not initialized. Call from bootstrap first.');
     }
     
-    console.log(`[DEBUG] CLI API discovery: repoRoot=${repoRoot}`);
+    const logger = getLogger('rest:cli-discovery');
+    logger.debug('CLI API discovery started', { repoRoot });
     
     const api = cliApiInstance;
     
     // Get plugins
     const plugins = await api.listPlugins();
-    console.log(`[DEBUG] CLI API discovery: found ${plugins.length} plugins`);
+    logger.debug('CLI API discovery: found plugins', { count: plugins.length });
     if (plugins.length > 0) {
-      console.log(`[DEBUG] CLI API discovery plugin IDs: ${plugins.map(p => `${p.id}@${p.version} (${p.kind})`).join(', ')}`);
+      logger.debug('CLI API discovery plugin IDs', { 
+        plugins: plugins.map(p => `${p.id}@${p.version} (${p.kind})`) 
+      });
     }
     
     // Get manifests
@@ -60,10 +64,10 @@ export async function discoverPluginsViaCli(
     const manifestsWithPaths: PluginManifestWithPath[] = [];
     
     for (const plugin of plugins) {
-      console.log(`[DEBUG] CLI API discovery: getting manifest for plugin ${plugin.id}...`);
+      logger.debug('CLI API discovery: getting manifest for plugin', { pluginId: plugin.id });
       const manifest = await api.getManifestV2(plugin.id);
       if (manifest) {
-        console.log(`[DEBUG] CLI API discovery: found manifest for ${plugin.id}, manifest.id=${manifest.id}`);
+        logger.debug('CLI API discovery: found manifest', { pluginId: plugin.id, manifestId: manifest.id });
         v2Manifests.push(manifest);
         // plugin.source.path is the path to the manifest file
         // pluginRoot should be the directory containing the manifest
@@ -76,13 +80,15 @@ export async function discoverPluginsViaCli(
           pluginRoot,
         });
       } else {
-        console.log(`[DEBUG] CLI API discovery: manifest not found for plugin ${plugin.id}`);
+        logger.debug('CLI API discovery: manifest not found for plugin', { pluginId: plugin.id });
       }
     }
     
-    console.log(`[DEBUG] CLI API discovery success: found ${v2Manifests.length} manifests`);
+    logger.debug('CLI API discovery success', { manifestCount: v2Manifests.length });
     if (v2Manifests.length > 0) {
-      console.log(`[DEBUG] CLI API discovery plugins: ${v2Manifests.map(m => `${m.id}@${m.version}`).join(', ')}`);
+      logger.debug('CLI API discovery plugins', { 
+        plugins: v2Manifests.map(m => `${m.id}@${m.version}`) 
+      });
     }
     
     return {
@@ -92,11 +98,12 @@ export async function discoverPluginsViaCli(
     };
   } catch (error) {
     // CLI API failed - return empty result with warning
+    const logger = getLogger('rest:cli-discovery');
     const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error(`[DEBUG] CLI API discovery error: ${errorMessage}`);
-    if (error instanceof Error && error.stack) {
-      console.error(`[DEBUG] CLI API discovery stack: ${error.stack}`);
-    }
+    logger.error('CLI API discovery error', { 
+      error: errorMessage,
+      stack: error instanceof Error ? error.stack : undefined 
+    });
     
     const warnings = [
       `CLI API discovery failed: ${errorMessage}. Falling back to local discovery.`,
