@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { ulid } from 'ulid';
-import { createRestLogger } from '../logging.js';
+import { getLogger } from '@kb-labs/core-sys/logging';
 
 /**
  * Register request ID middleware
@@ -19,15 +19,23 @@ export function registerRequestIdMiddleware(server: FastifyInstance): void {
     reply.header('X-Request-Id', requestId);
     reply.header('X-Trace-Id', traceId);
 
-    const requestLogger = createRestLogger('request', {
-      reqId: requestId,
-      traceId,
-      method: request.method,
-      url: request.url,
+    const requestLogger = getLogger('rest:request').child({
+      meta: {
+        layer: 'rest',
+        reqId: requestId,
+        traceId,
+        method: request.method,
+        url: request.url,
+      },
     });
 
-    (request as any).log = requestLogger;
-    (reply as any).log = requestLogger;
+    (request as any).log = {
+      debug: (msg: string, fields?: Record<string, unknown>) => requestLogger.debug(msg, fields),
+      info: (msg: string, fields?: Record<string, unknown>) => requestLogger.info(msg, fields),
+      warn: (msg: string, fields?: Record<string, unknown>) => requestLogger.warn(msg, fields),
+      error: (msg: string, fields?: Record<string, unknown> | Error) => requestLogger.error(msg, fields),
+    };
+    (reply as any).log = (request as any).log;
 
     requestLogger.info('Request received');
   });

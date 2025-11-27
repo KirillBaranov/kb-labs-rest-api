@@ -10,7 +10,7 @@ import type { CliAPI } from '@kb-labs/cli-api';
 import { registerRoutes } from './routes/index.js';
 import { registerPlugins } from './plugins/index.js';
 import { registerMiddleware } from './middleware/index.js';
-import { createRestLogger } from './logging.js';
+import { getLogger } from '@kb-labs/core-sys/logging';
 import { randomUUID } from 'node:crypto';
 
 /**
@@ -50,9 +50,23 @@ export async function createServer(
 
 function createRestServerLogger() {
   const traceId = randomUUID();
-  return createRestLogger('server', {
-    traceId,
-    reqId: traceId,
+  const logger = getLogger('rest:server').child({
+    meta: {
+      layer: 'rest',
+      traceId,
+      reqId: traceId,
+    },
   });
+  
+  // Return Fastify-compatible logger interface
+  return {
+    debug: (msg: string, fields?: Record<string, unknown>) => logger.debug(msg, fields),
+    info: (msg: string, fields?: Record<string, unknown>) => logger.info(msg, fields),
+    warn: (msg: string, fields?: Record<string, unknown>) => logger.warn(msg, fields),
+    error: (msg: string, fields?: Record<string, unknown> | Error) => logger.error(msg, fields),
+    fatal: (msg: string, fields?: Record<string, unknown> | Error) => logger.error(msg, fields),
+    trace: (msg: string, fields?: Record<string, unknown>) => logger.debug(msg, fields),
+    child: () => createRestServerLogger(), // Fastify may call child()
+  };
 }
 

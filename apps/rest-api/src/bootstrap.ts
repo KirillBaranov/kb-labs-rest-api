@@ -10,8 +10,7 @@ import { createCliAPI } from '@kb-labs/cli-api';
 import { setCliApi, disposeCliApi } from './plugins/cli-discovery.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
-import { initLogging } from '@kb-labs/core-sys/logging/init';
-import { getLogger } from '@kb-labs/core-sys/logging';
+import { initLogging, getLogger } from '@kb-labs/core-sys/logging';
 import type { LogLevel } from '@kb-labs/core-sys';
 import { randomUUID } from 'node:crypto';
 
