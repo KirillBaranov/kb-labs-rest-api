@@ -33,6 +33,7 @@ interface Metrics {
     byMethod: Record<string, number>;
     byStatus: Record<string, number>;
     byRoute: Record<string, number>;
+    byTenant: Record<string, number>; // ← Multi-tenancy support
   };
   latency: {
     total: number;
@@ -60,6 +61,12 @@ interface Metrics {
     byPlugin: Record<string, HeaderPluginMetrics>;
   };
   redis: RedisMetrics;
+  // ← Multi-tenancy support
+  perTenant: Map<string, {
+    total: number;
+    errors: number;
+    totalLatency: number;
+  }>;
 }
 
 type RouteLatencyStats = {
@@ -175,6 +182,12 @@ interface MetricsSnapshot {
     maxDuration: number;
     statuses: Record<string, number>;
   }>;
+  perTenant: Array<{
+    tenantId: string;
+    total: number;
+    errors: number;
+    avgLatencyMs: number;
+  }>;
   errors: Metrics['errors'];
   timestamps: Metrics['timestamps'];
   headers: {
@@ -225,6 +238,7 @@ class MetricsCollector {
         byMethod: {},
         byStatus: {},
         byRoute: {},
+        byTenant: {}, // ← Multi-tenancy support
       },
       latency: {
         total: 0,
@@ -252,6 +266,7 @@ class MetricsCollector {
         byPlugin: {},
       },
       redis: this.createRedisMetrics(),
+      perTenant: new Map(), // ← Multi-tenancy support
     };
   }
 
@@ -272,7 +287,7 @@ class MetricsCollector {
     };
   }
 
-  recordRequest(method: string, route: string, statusCode: number, durationMs: number): void {
+  recordRequest(method: string, route: string, statusCode: number, durationMs: number, tenantId?: string): void {
     this.metrics.requests.total++;
     this.metrics.requests.byMethod[method] = (this.metrics.requests.byMethod[method] || 0) + 1;
     const statusGroup = `${Math.floor(statusCode / 100)}xx`;
@@ -283,6 +298,23 @@ class MetricsCollector {
       const routeBucket = `${method} ${normalizedRoute}`;
       this.metrics.requests.byRoute[routeBucket] = (this.metrics.requests.byRoute[routeBucket] || 0) + 1;
       updateLatencyHistogram(this.metrics.latency.histogram, routeBucket, durationMs, statusCode);
+    }
+
+    // ← Multi-tenancy support: track by tenant
+    if (tenantId) {
+      this.metrics.requests.byTenant[tenantId] = (this.metrics.requests.byTenant[tenantId] || 0) + 1;
+
+      const tenantStats = this.metrics.perTenant.get(tenantId) || {
+        total: 0,
+        errors: 0,
+        totalLatency: 0,
+      };
+      tenantStats.total++;
+      tenantStats.totalLatency += durationMs;
+      if (statusCode >= 400) {
+        tenantStats.errors++;
+      }
+      this.metrics.perTenant.set(tenantId, tenantStats);
     }
 
     this.metrics.latency.count++;
@@ -445,6 +477,14 @@ class MetricsCollector {
         }
       : null;
 
+    // Serialize perTenant Map to Array
+    const perTenantArray = Array.from(this.metrics.perTenant.entries()).map(([tenantId, stats]) => ({
+      tenantId,
+      total: stats.total,
+      errors: stats.errors,
+      avgLatencyMs: stats.total > 0 ? stats.totalLatency / stats.total : 0,
+    }));
+
     return {
       requests: { ...this.metrics.requests },
       latency: {
@@ -456,6 +496,7 @@ class MetricsCollector {
         histogram: histogramArray,
       },
       perPlugin: Array.from(perPluginMap.values()),
+      perTenant: perTenantArray,
       errors: { ...this.metrics.errors, byCode: { ...this.metrics.errors.byCode } },
       timestamps: { ...this.metrics.timestamps },
       headers: {
@@ -553,7 +594,11 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     const duration = Math.max(performance.now() - start, 0);
     const method = (request.method || request.raw.method || 'GET').toUpperCase();
     const routePath = request.routerPath ?? request.routeOptions?.url ?? request.url;
-    metricsCollector.recordRequest(method, routePath ?? request.url, reply.statusCode, duration);
+
+    // Extract tenantId from header or env var
+    const tenantId = (request.headers['x-tenant-id'] as string | undefined) ?? process.env.KB_TENANT_ID ?? 'default';
+
+    metricsCollector.recordRequest(method, routePath ?? request.url, reply.statusCode, duration, tenantId);
     if (reply.statusCode >= 400) {
       metricsCollector.recordError(String(reply.statusCode));
     }

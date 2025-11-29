@@ -144,6 +144,22 @@ export function registerMetricsRoutes(
       }
     }
 
+    // Tenant metrics (multi-tenancy)
+    if (metrics.perTenant.length > 0) {
+      prometheusLines.push(`# HELP kb_tenant_request_total Total HTTP requests per tenant`);
+      prometheusLines.push(`# TYPE kb_tenant_request_total gauge`);
+      prometheusLines.push(`# HELP kb_tenant_request_errors_total Total HTTP errors per tenant`);
+      prometheusLines.push(`# TYPE kb_tenant_request_errors_total gauge`);
+      prometheusLines.push(`# HELP kb_tenant_request_duration_ms_avg Average request duration per tenant`);
+      prometheusLines.push(`# TYPE kb_tenant_request_duration_ms_avg gauge`);
+
+      for (const tenantMetrics of metrics.perTenant) {
+        prometheusLines.push(`kb_tenant_request_total{tenant="${tenantMetrics.tenantId}"} ${tenantMetrics.total}`);
+        prometheusLines.push(`kb_tenant_request_errors_total{tenant="${tenantMetrics.tenantId}"} ${tenantMetrics.errors}`);
+        prometheusLines.push(`kb_tenant_request_duration_ms_avg{tenant="${tenantMetrics.tenantId}"} ${formatNumber(tenantMetrics.avgLatencyMs)}`);
+      }
+    }
+
     if (pluginSnapshot) {
       prometheusLines.push(`# HELP kb_plugins_mount_total Plugins processed during last mount run`);
       prometheusLines.push(`# TYPE kb_plugins_mount_total gauge`);
