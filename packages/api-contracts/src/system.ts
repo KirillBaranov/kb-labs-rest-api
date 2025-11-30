@@ -1,4 +1,4 @@
-import type { SuccessEnvelope } from './envelopes.js';
+import type { SuccessEnvelope } from './envelopes';
 
 export interface SystemHealthSnapshot {
   schema: 'kb.health/1';

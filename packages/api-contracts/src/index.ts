@@ -1,5 +1,5 @@
-export * from './error-code.js';
-export * from './envelopes.js';
-export * from './system.js';
-export * from './ready.js';
+export * from './error-code';
+export * from './envelopes';
+export * from './system';
+export * from './ready';
 

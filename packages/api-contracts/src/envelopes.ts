@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { PermissionDiff, PermissionSummary } from './error-code.js';
+import type { PermissionDiff, PermissionSummary } from './error-code';
 
 export interface EnvelopeMeta {
   requestId: string;
