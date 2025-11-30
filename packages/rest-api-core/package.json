@@ -28,16 +28,15 @@
     "test:watch": "vitest --passWithNoTests -c ../../vitest.config.ts"
   },
   "dependencies": {
-    "zod": "^3.22.4",
-    "@kb-labs/core-bundle": "link:../../../kb-labs-core/packages/bundle",
+    "zod": "^3.23.8",
+    "@kb-labs/core-bundle": "link:../../../kb-labs-core/packages/core-bundle",
     "@kb-labs/core-config": "link:../../../kb-labs-core/packages/config"
   },
   "devDependencies": {
-    "tsx": "^4.20.5",
-    "vitest": "^3",
+    "vitest": "^3.2.4",
     "@kb-labs/devkit": "link:../../../kb-labs-devkit",
-    "tsup": "^8",
-    "@types/node": "^20.10.0"
+    "tsup": "^8.5.0",
+    "@types/node": "^24.3.3"
   },
   "peerDependencies": {
     "@types/node": "^20.10.0"

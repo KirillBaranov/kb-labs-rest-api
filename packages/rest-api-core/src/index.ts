@@ -3,6 +3,6 @@
  * KB Labs REST API Core - Business logic and adapters
  */
 
-export { loadRestApiConfig } from './config/loader.js';
-export { restApiConfigSchema } from './config/schema.js';
-export type { RestApiConfig } from './config/schema.js';
+export { loadRestApiConfig } from './config/loader';
+export { restApiConfigSchema } from './config/schema';
+export type { RestApiConfig } from './config/schema';

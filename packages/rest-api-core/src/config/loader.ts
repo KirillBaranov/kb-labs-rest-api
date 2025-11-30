@@ -5,7 +5,7 @@
 
 import { loadBundle } from '@kb-labs/core-bundle';
 import { resolveConfig, findNearestConfig, readJsonWithDiagnostics } from '@kb-labs/core-config';
-import { restApiConfigSchema, type RestApiConfig } from './schema.js';
+import { restApiConfigSchema, type RestApiConfig } from './schema';
 
 /**
  * Load REST API configuration
