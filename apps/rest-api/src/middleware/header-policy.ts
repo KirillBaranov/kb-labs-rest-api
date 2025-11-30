@@ -5,8 +5,8 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { CompiledHeaderPolicy } from '@kb-labs/plugin-adapter-rest';
-import { metricsCollector } from './metrics.js';
-import { recordHeaderDebug } from '../diagnostics/header-debug.js';
+import { metricsCollector } from './metrics';
+import { recordHeaderDebug } from '../diagnostics/header-debug';
 import { applyHeaderTransforms, loadCustomHeaderTransform } from '@kb-labs/plugin-runtime';
 
 type CompiledHeaderRule = CompiledHeaderPolicy['inbound'][number];

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RedisStatus } from '@kb-labs/cli-api'
-import { metricsCollector } from '../metrics.js'
+import { metricsCollector } from '../metrics'
 
 function redisStatus(overrides: Partial<RedisStatus> = {}): RedisStatus {
   const baseRoles: RedisStatus['roles'] = {

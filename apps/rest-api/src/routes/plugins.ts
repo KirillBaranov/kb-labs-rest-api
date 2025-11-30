@@ -9,11 +9,11 @@ import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
 import type { ManifestV2 } from '@kb-labs/plugin-manifest';
 import { mountRoutes } from '@kb-labs/plugin-adapter-rest';
 import { execute as runtimeExecute } from '@kb-labs/plugin-runtime';
-import { getV2Manifests, type PluginManifestWithPath } from '../plugins/compat.js';
+import { getV2Manifests, type PluginManifestWithPath } from '../plugins/compat';
 import * as path from 'node:path';
-import type { ReadinessState } from './readiness.js';
+import type { ReadinessState } from './readiness';
 import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
-import { metricsCollector } from '../middleware/metrics.js';
+import { metricsCollector } from '../middleware/metrics';
 import { performance } from 'node:perf_hooks';
 
 interface SnapshotManifestEntry {

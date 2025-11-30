@@ -6,16 +6,16 @@
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, RedisStatus } from '@kb-labs/cli-api';
-import { EventHub } from '../events/hub.js';
-import { registerEventRoutes } from './events.js';
-import { registerHealthRoutes } from './health.js';
-import { registerOpenAPIRoutes } from './openapi.js';
-import { registerMetricsRoutes } from './metrics.js';
-import { registerPluginRoutes, registerPluginRegistry } from './plugins.js';
-import { registerWorkflowRoutes } from './workflows.js';
-import type { ReadinessState } from './readiness.js';
-import { isReady, resolveReadinessReason } from './readiness.js';
-import { metricsCollector } from '../middleware/metrics.js';
+import { EventHub } from '../events/hub';
+import { registerEventRoutes } from './events';
+import { registerHealthRoutes } from './health';
+import { registerOpenAPIRoutes } from './openapi';
+import { registerMetricsRoutes } from './metrics';
+import { registerPluginRoutes, registerPluginRegistry } from './plugins';
+import { registerWorkflowRoutes } from './workflows';
+import type { ReadinessState } from './readiness';
+import { isReady, resolveReadinessReason } from './readiness';
+import { metricsCollector } from '../middleware/metrics';
 
 function normalizeBasePath(basePath?: string): string {
   if (!basePath || basePath === '/') {

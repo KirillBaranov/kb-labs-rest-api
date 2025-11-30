@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { isReady } from '../routes/readiness.js';
+import { isReady } from '../routes/readiness';
 
 type StartupCounters = {
   inFlight: number;

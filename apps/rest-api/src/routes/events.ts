@@ -1,11 +1,11 @@
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
-import type { ReadinessState } from './readiness.js';
-import { isReady, resolveReadinessReason } from './readiness.js';
-import type { EventHub, BroadcastEvent } from '../events/hub.js';
-import { metricsCollector } from '../middleware/metrics.js';
-import { buildRegistrySseAuthHook } from '../utils/sse-auth.js';
+import type { ReadinessState } from './readiness';
+import { isReady, resolveReadinessReason } from './readiness';
+import type { EventHub, BroadcastEvent } from '../events/hub';
+import { metricsCollector } from '../middleware/metrics';
+import { buildRegistrySseAuthHook } from '../utils/sse-auth';
 
 export async function registerEventRoutes(
   server: FastifyInstance,

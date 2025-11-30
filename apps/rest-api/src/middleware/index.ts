@@ -5,16 +5,16 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { registerEnvelopeMiddleware } from './envelope.js';
-import { registerRequestIdMiddleware } from './request-id.js';
-import { registerMockModeMiddleware } from './mock-mode.js';
-import { registerSecurityHeadersMiddleware } from './security-headers.js';
-import { registerCacheMiddleware } from './cache.js';
-import { registerMetricsMiddleware } from './metrics.js';
-import { registerErrorGuard } from './error-guard.js';
-import { registerStartupGuard } from './startup-guard.js';
-import { registerRequestTimeoutGuard } from './request-timeout.js';
-import { registerHeaderPolicyMiddleware } from './header-policy.js';
+import { registerEnvelopeMiddleware } from './envelope';
+import { registerRequestIdMiddleware } from './request-id';
+import { registerMockModeMiddleware } from './mock-mode';
+import { registerSecurityHeadersMiddleware } from './security-headers';
+import { registerCacheMiddleware } from './cache';
+import { registerMetricsMiddleware } from './metrics';
+import { registerErrorGuard } from './error-guard';
+import { registerStartupGuard } from './startup-guard';
+import { registerRequestTimeoutGuard } from './request-timeout';
+import { registerHeaderPolicyMiddleware } from './header-policy';
 
 /**
  * Register all middleware

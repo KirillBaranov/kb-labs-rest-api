@@ -3,7 +3,7 @@ import Fastify from 'fastify'
 import type { FastifyInstance } from 'fastify'
 import type { CliAPI } from '@kb-labs/cli-api'
 import type { RestApiConfig } from '@kb-labs/rest-api-core'
-import { registerWorkflowRoutes } from '../workflows.js'
+import { registerWorkflowRoutes } from '../workflows'
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,

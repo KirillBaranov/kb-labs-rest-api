@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { buildRegistrySseAuthHook } from '../sse-auth.js';
+import { buildRegistrySseAuthHook } from '../sse-auth';
 
 function baseConfig(overrides: Partial<RestApiConfig> = {}): RestApiConfig {
   const { events, ...rest } = overrides;

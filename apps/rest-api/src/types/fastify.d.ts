@@ -10,7 +10,7 @@ import type { ContextConfigDefault, RawReplyDefaultExpression, RawRequestDefault
 import type { CliAPI } from '@kb-labs/cli-api';
 import type { ReadinessState } from '../routes/readiness';
 import '@fastify/type-provider-typebox';
-import type { EventHub } from '../events/hub.js';
+import type { EventHub } from '../events/hub';
 
 declare module 'fastify/types/instance' {
   interface FastifyInstance<

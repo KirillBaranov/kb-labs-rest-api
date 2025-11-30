@@ -3,7 +3,7 @@ import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { ReadinessState } from '../readiness.js';
+import type { ReadinessState } from '../readiness';
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -66,7 +66,7 @@ beforeEach(() => {
 
 describe('registerHealthRoutes', () => {
   it('returns kb.health/1 snapshot with readiness metadata and degraded status when plugin failures exist', async () => {
-    const { registerHealthRoutes } = await import('../health.js');
+    const { registerHealthRoutes } = await import('../health');
     const app = Fastify({ logger: false }) as unknown as FastifyInstance;
 
     const readiness: ReadinessState = {
@@ -138,7 +138,7 @@ describe('registerHealthRoutes', () => {
   });
 
   it('ready endpoint waits for registry load and mounted routes', async () => {
-    const { registerHealthRoutes } = await import('../health.js');
+    const { registerHealthRoutes } = await import('../health');
     const app = Fastify({ logger: false }) as unknown as FastifyInstance;
 
     const readiness: ReadinessState = {
@@ -220,7 +220,7 @@ describe('registerHealthRoutes', () => {
   });
 
   it('reports redis_unavailable when redis is enabled but unhealthy', async () => {
-    const { registerHealthRoutes } = await import('../health.js');
+    const { registerHealthRoutes } = await import('../health');
     const app = Fastify({ logger: false }) as unknown as FastifyInstance;
 
     const readiness: ReadinessState = {
@@ -291,7 +291,7 @@ describe('registerHealthRoutes', () => {
   });
 
   it('reports redis_unavailable when redis is enabled but unhealthy', async () => {
-    const { registerHealthRoutes } = await import('../health.js');
+    const { registerHealthRoutes } = await import('../health');
     const app = Fastify({ logger: false }) as unknown as FastifyInstance;
 
     const readiness: ReadinessState = {

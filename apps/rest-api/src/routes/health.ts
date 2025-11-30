@@ -8,10 +8,10 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
-import type { ReadinessState } from './readiness.js';
-import { isReady, resolveReadinessReason } from './readiness.js';
-import type { PluginsMetricsSnapshot } from '../middleware/metrics.js';
-import { metricsCollector } from '../middleware/metrics.js';
+import type { ReadinessState } from './readiness';
+import { isReady, resolveReadinessReason } from './readiness';
+import type { PluginsMetricsSnapshot } from '../middleware/metrics';
+import { metricsCollector } from '../middleware/metrics';
 
 const require = createRequire(import.meta.url);
 

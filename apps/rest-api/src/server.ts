@@ -7,9 +7,9 @@ import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
-import { registerRoutes } from './routes/index.js';
-import { registerPlugins } from './plugins/index.js';
-import { registerMiddleware } from './middleware/index.js';
+import { registerRoutes } from './routes/index';
+import { registerPlugins } from './plugins/index';
+import { registerMiddleware } from './middleware/index';
 import { getLogger } from '@kb-labs/core-sys/logging';
 import { randomUUID } from 'node:crypto';
 

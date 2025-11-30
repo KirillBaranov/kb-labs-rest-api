@@ -4,10 +4,10 @@
  */
 
 import { loadRestApiConfig } from '@kb-labs/rest-api-core';
-import { createServer } from './server.js';
+import { createServer } from './server';
 import { findRepoRoot } from '@kb-labs/core-sys';
 import { createCliAPI } from '@kb-labs/cli-api';
-import { setCliApi, disposeCliApi } from './plugins/cli-discovery.js';
+import { setCliApi, disposeCliApi } from './plugins/cli-discovery';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { initLogging, getLogger } from '@kb-labs/core-sys/logging';

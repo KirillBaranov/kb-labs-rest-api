@@ -4,9 +4,9 @@
  */
 
 import type { ManifestV1, ManifestV2 } from '@kb-labs/plugin-manifest';
-import { discoverPlugins, checkDualManifests } from './discovery.js';
+import { discoverPlugins, checkDualManifests } from './discovery';
 import { migrateV1ToV2 } from '@kb-labs/plugin-manifest';
-import { discoverPluginsViaCli } from './cli-discovery.js';
+import { discoverPluginsViaCli } from './cli-discovery';
 import { getLogger } from '@kb-labs/core-sys/logging';
 
 /**

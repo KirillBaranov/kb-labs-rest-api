@@ -1,6 +1,6 @@
 import { beforeEach, afterEach, describe, expect, it } from 'vitest';
 import Fastify, { type FastifyInstance } from 'fastify';
-import { registerHeaderPolicyMiddleware } from '../header-policy.js';
+import { registerHeaderPolicyMiddleware } from '../header-policy';
 import { compileHeaderPolicy, type ResolvedHeaderPolicy } from '@kb-labs/plugin-adapter-rest';
 
 describe('header-policy middleware', () => {

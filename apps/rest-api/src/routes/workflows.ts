@@ -3,8 +3,8 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core'
 import type { CliAPI, WorkflowLogEvent } from '@kb-labs/cli-api'
 import { WorkflowSpecSchema, type WorkflowSpec } from '@kb-labs/workflow-contracts'
 import { z } from 'zod'
-import { normalizeBasePath } from '../utils/path-helpers.js'
-import { objectSchema, responseSchemas } from '../utils/schema.js'
+import { normalizeBasePath } from '../utils/path-helpers'
+import { objectSchema, responseSchemas } from '../utils/schema'
 
 const runRequestSchema = z
   .object({

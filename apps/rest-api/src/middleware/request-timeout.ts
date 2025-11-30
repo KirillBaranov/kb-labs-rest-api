@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { metricsCollector } from './metrics.js';
+import { metricsCollector } from './metrics';
 
 type RouteConfig = {
   kbRouteBudgetMs?: number | null;
