@@ -30,15 +30,12 @@
   "dependencies": {
     "zod": "^3.23.8",
     "@kb-labs/core-bundle": "link:../../../kb-labs-core/packages/core-bundle",
-    "@kb-labs/core-config": "link:../../../kb-labs-core/packages/config"
+    "@kb-labs/core-config": "link:../../../kb-labs-core/packages/core-config"
   },
   "devDependencies": {
     "vitest": "^3.2.4",
     "@kb-labs/devkit": "link:../../../kb-labs-devkit",
     "tsup": "^8.5.0",
     "@types/node": "^24.3.3"
-  },
-  "peerDependencies": {
-    "@types/node": "^20.10.0"
   }
 }

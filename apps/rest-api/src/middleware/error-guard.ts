@@ -4,8 +4,8 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import type { PluginErrorEnvelope } from '@kb-labs/api-contracts';
-import { ErrorCode } from '@kb-labs/api-contracts';
+import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
+import { ErrorCode } from '@kb-labs/rest-api-contracts';
 
 /**
  * Register global error handler for plugin routes

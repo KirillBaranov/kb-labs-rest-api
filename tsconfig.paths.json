@@ -3,12 +3,6 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@kb-labs/api-contracts": [
-        "packages/api-contracts/src/index.ts"
-      ],
-      "@kb-labs/api-contracts/*": [
-        "packages/api-contracts/src/*"
-      ],
       "@kb-labs/cli-api": [
         "../kb-labs-cli/packages/cli-api/src/index.ts"
       ],
@@ -52,22 +46,28 @@
         "../kb-labs-plugin/packages/adapters/rest/src/*"
       ],
       "@kb-labs/plugin-devtools": [
-        "../kb-labs-plugin/packages/devtools/src/index.ts"
+        "../kb-labs-plugin/packages/plugin-devtools/src/index.ts"
       ],
       "@kb-labs/plugin-devtools/*": [
-        "../kb-labs-plugin/packages/devtools/src/*"
+        "../kb-labs-plugin/packages/plugin-devtools/src/*"
       ],
       "@kb-labs/plugin-manifest": [
-        "../kb-labs-plugin/packages/manifest/src/index.ts"
+        "../kb-labs-plugin/packages/plugin-manifest/src/index.ts"
       ],
       "@kb-labs/plugin-manifest/*": [
-        "../kb-labs-plugin/packages/manifest/src/*"
+        "../kb-labs-plugin/packages/plugin-manifest/src/*"
       ],
       "@kb-labs/plugin-runtime": [
-        "../kb-labs-plugin/packages/runtime/src/index.ts"
+        "../kb-labs-plugin/packages/plugin-runtime/src/index.ts"
       ],
       "@kb-labs/plugin-runtime/*": [
-        "../kb-labs-plugin/packages/runtime/src/*"
+        "../kb-labs-plugin/packages/plugin-runtime/src/*"
+      ],
+      "@kb-labs/rest-api-contracts": [
+        "packages/rest-api-contracts/src/index.ts"
+      ],
+      "@kb-labs/rest-api-contracts/*": [
+        "packages/rest-api-contracts/src/*"
       ],
       "@kb-labs/rest-api-core": [
         "packages/rest-api-core/src/index.ts"
