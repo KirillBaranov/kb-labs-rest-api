@@ -40,16 +40,10 @@
         "../kb-labs-core/packages/core-workspace/src/*"
       ],
       "@kb-labs/plugin-adapter-rest": [
-        "../kb-labs-plugin/packages/adapters/rest/src/index.ts"
+        "../kb-labs-plugin/packages/plugin-adapters/rest/src/index.ts"
       ],
       "@kb-labs/plugin-adapter-rest/*": [
-        "../kb-labs-plugin/packages/adapters/rest/src/*"
-      ],
-      "@kb-labs/plugin-devtools": [
-        "../kb-labs-plugin/packages/plugin-devtools/src/index.ts"
-      ],
-      "@kb-labs/plugin-devtools/*": [
-        "../kb-labs-plugin/packages/plugin-devtools/src/*"
+        "../kb-labs-plugin/packages/plugin-adapters/rest/src/*"
       ],
       "@kb-labs/plugin-manifest": [
         "../kb-labs-plugin/packages/plugin-manifest/src/index.ts"

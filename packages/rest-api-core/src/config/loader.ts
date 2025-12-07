@@ -22,7 +22,7 @@ export async function loadRestApiConfig(
     const bundle = await loadBundle({
       cwd,
       product: 'restApi' as any, // TODO: Add 'restApi' to ProductId type
-      profileKey: 'default',
+      profileId: 'default',
     });
     bundleConfig = bundle.config;
   } catch {
