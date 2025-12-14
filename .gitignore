@@ -66,4 +66,4 @@ analytics/
 *.db
 
 # DevKit provenance
-.kb/devkit/tmp/
+.kb/devkit/tmp/.npmrc
