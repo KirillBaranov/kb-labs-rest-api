@@ -3,7 +3,6 @@
  * Health check and diagnostics endpoints
  */
 
-import { createRequire } from 'node:module';
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
@@ -13,10 +12,9 @@ import { isReady, resolveReadinessReason } from './readiness';
 import type { PluginsMetricsSnapshot } from '../middleware/metrics';
 import { metricsCollector } from '../middleware/metrics';
 
-const require = createRequire(import.meta.url);
-
-const pkgJson = require('../../package.json') as { version?: string };
-const REST_VERSION = pkgJson?.version ?? '0.0.0';
+// Version is injected at build time by tsup define
+declare const __REST_API_VERSION__: string;
+const REST_VERSION = typeof __REST_API_VERSION__ !== 'undefined' ? __REST_API_VERSION__ : '0.0.0';
 
 const CACHE_WINDOW_MS = 200;
 const READY_SCHEMA = 'kb.ready/1';

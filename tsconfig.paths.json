@@ -68,6 +68,12 @@
       ],
       "@kb-labs/rest-api-core/*": [
         "packages/rest-api-core/src/*"
+      ],
+      "@kb-labs/workflow-contracts": [
+        "../kb-labs-workflow/packages/workflow-contracts/src/index.ts"
+      ],
+      "@kb-labs/workflow-contracts/*": [
+        "../kb-labs-workflow/packages/workflow-contracts/src/*"
       ]
     }
   }

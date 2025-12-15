@@ -9,6 +9,8 @@ import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
 import type { ManifestV2 } from '@kb-labs/plugin-manifest';
 import { mountRoutes } from '@kb-labs/plugin-adapter-rest';
 import { execute as runtimeExecute } from '@kb-labs/plugin-runtime';
+import { toRegistry, combineRegistries } from '@kb-labs/plugin-adapter-studio';
+import type { StudioRegistry } from '@kb-labs/rest-api-contracts';
 import { getV2Manifests, type PluginManifestWithPath } from '../plugins/compat';
 import * as path from 'node:path';
 import type { ReadinessState } from './readiness';
@@ -356,6 +358,8 @@ export async function registerPluginRegistry(
   cliApi: CliAPI
 ): Promise<void> {
   const basePath = config.basePath;
+
+  // Legacy endpoint: returns raw manifests
   server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
     try {
       const snapshot = cliApi.snapshot();
@@ -375,6 +379,46 @@ export async function registerPluginRegistry(
       }, 'Failed to get plugin registry');
       reply.code(500).send({
         error: 'Failed to load plugin registry',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // New endpoint: returns pre-computed StudioRegistry
+  // Studio should use this endpoint instead of plugins/registry
+  server.get(`${basePath}/studio/registry`, async (_request, reply) => {
+    try {
+      const snapshot = cliApi.snapshot();
+      const manifests = extractSnapshotManifests(snapshot);
+
+      // Convert manifests with studio section to StudioRegistry
+      const registries = manifests
+        .filter(entry => entry.manifest.studio)
+        .map(entry => toRegistry(entry.manifest));
+
+      // Combine all registries into one
+      const combined = registries.length > 0
+        ? combineRegistries(...registries)
+        : { plugins: [], widgets: [], menus: [], layouts: [] };
+
+      const studioRegistry: StudioRegistry = {
+        schema: 'kb.studio-registry/1',
+        registryVersion: String(snapshot.rev),
+        generatedAt: new Date().toISOString(),
+        plugins: combined.plugins,
+        widgets: combined.widgets,
+        menus: combined.menus,
+        layouts: combined.layouts,
+      };
+
+      reply.type('application/json');
+      return studioRegistry;
+    } catch (error) {
+      server.log.error({
+        err: error instanceof Error ? error : new Error(String(error)),
+      }, 'Failed to generate studio registry');
+      reply.code(500).send({
+        error: 'Failed to generate studio registry',
         message: error instanceof Error ? error.message : String(error),
       });
     }
