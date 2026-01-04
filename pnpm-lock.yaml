@@ -65,12 +65,6 @@ importers:
       '@kb-labs/core-workspace':
         specifier: link:../../../kb-labs-core/packages/core-workspace
         version: link:../../../kb-labs-core/packages/core-workspace
-      '@kb-labs/plugin-adapter-rest':
-        specifier: link:../../../kb-labs-plugin/packages/plugin-adapters/rest
-        version: link:../../../kb-labs-plugin/packages/plugin-adapters/rest
-      '@kb-labs/plugin-manifest':
-        specifier: link:../../../kb-labs-plugin/packages/plugin-manifest
-        version: link:../../../kb-labs-plugin/packages/plugin-manifest
       '@kb-labs/plugin-runtime':
         specifier: link:../../../kb-labs-plugin/packages/plugin-runtime
         version: link:../../../kb-labs-plugin/packages/plugin-runtime
@@ -80,6 +74,9 @@ importers:
       '@kb-labs/rest-api-core':
         specifier: link:../../packages/rest-api-core
         version: link:../../packages/rest-api-core
+      '@kb-labs/workflow-contracts':
+        specifier: link:../../../kb-labs-workflow/packages/workflow-contracts
+        version: link:../../../kb-labs-workflow/packages/workflow-contracts
       fastify:
         specifier: ^4.24.3
         version: 4.29.1
@@ -92,6 +89,9 @@ importers:
       pino-pretty:
         specifier: ^10.2.3
         version: 10.3.1
+      prom-client:
+        specifier: ^15.1.3
+        version: 15.1.3
       ulid:
         specifier: ^2.3.0
         version: 2.4.0
@@ -123,6 +123,9 @@ importers:
 
   packages/rest-api-contracts:
     dependencies:
+      '@kb-labs/studio-contracts':
+        specifier: link:../../../kb-labs-studio/packages/studio-contracts
+        version: link:../../../kb-labs-studio/packages/studio-contracts
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -154,6 +157,12 @@ importers:
       '@kb-labs/core-config':
         specifier: link:../../../kb-labs-core/packages/core-config
         version: link:../../../kb-labs-core/packages/core-config
+      '@kb-labs/plugin-contracts':
+        specifier: link:../../../kb-labs-plugin/packages/plugin-contracts
+        version: link:../../../kb-labs-plugin/packages/plugin-contracts
+      '@kb-labs/rest-api-contracts':
+        specifier: link:../rest-api-contracts
+        version: link:../rest-api-contracts
       zod:
         specifier: ^3.23.8
         version: 3.25.76
@@ -609,6 +618,10 @@ packages:
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
 
+  '@opentelemetry/api@1.9.0':
+    resolution: {integrity: sha512-3giAOQvZiH5F9bMlMiv8+GSPMeqg0dbaeo58/0SlA9sxSqZhnUtxzX9/2FzyhS9sWQf5S0GJE0AKBrFqjpeYcg==}
+    engines: {node: '>=8.0.0'}
+
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
 
@@ -932,6 +945,9 @@ packages:
 
   base64-js@1.5.1:
     resolution: {integrity: sha512-AKpaYlHn8t4SVbOHCy+b5+KKgvR4vrsD8vbvrbiQJps7fKDTkjkDry6ji0rUJjC0kzbNePLwzxq8iypo41qeWA==}
+
+  bintrees@1.0.2:
+    resolution: {integrity: sha512-VOMgTMwjAaUG580SXn3LacVgjurrbMme7ZZNYGSSV7mmtY6QQRh0Eg3pwIcntQ77DErK1L0NxkbetjcoXzVwKw==}
 
   boolbase@1.0.0:
     resolution: {integrity: sha512-JZOSA7Mo9sNGB8+UjSgzdLtokWAky1zbztM3WRLCbZ70/3cTANmQmOdR7y2g+J0e2WXywy1yS468tY+IruqEww==}
@@ -1604,6 +1620,10 @@ packages:
     resolution: {integrity: sha512-cdGef/drWFoydD1JsMzuFf8100nZl+GT+yacc2bEced5f9Rjk4z+WtFUTBu9PhOi9j/jfmBPu0mMEY4wIdAF8A==}
     engines: {node: '>= 0.6.0'}
 
+  prom-client@15.1.3:
+    resolution: {integrity: sha512-6ZiOBfCywsD4k1BN9IX0uZhF+tJkV8q8llP64G5Hajs4JOeVLPCwpPVcpXy3BwYiUGgyJzsJJQeOIv7+hDSq8g==}
+    engines: {node: ^16 || ^18 || >=20}
+
   proxy-addr@2.0.7:
     resolution: {integrity: sha512-llQsMLSUDUPT44jdrU/O37qlnifitDP+ZwrmmZcoSKyLKvtZxpyV0n2/bD/N4tBAAZ/gJEdZU7KMraoK1+XYAg==}
     engines: {node: '>= 0.10'}
@@ -1767,6 +1787,9 @@ packages:
   supports-color@7.2.0:
     resolution: {integrity: sha512-qpCAvRl9stuOHveKsn7HncJRvv501qIacKzQlO/+Lwxc9+0q2wLyv4Dfvt80/DPn2pqOBsJdDiogXGR9+OvwRw==}
     engines: {node: '>=8'}
+
+  tdigest@0.1.2:
+    resolution: {integrity: sha512-+G0LLgjjo9BZX2MfdvPfH+MKLCrxlXSYec5DaPYP1fe6Iyhf0/fSmJ0bFiZ1F8BT6cGXl2LpltQptzjXKWEkKA==}
 
   test-exclude@7.0.1:
     resolution: {integrity: sha512-pFYqmTw68LXVjeWJMST4+borgQP2AyMNbg1BpZh9LbyhUeNkeaPF9gzfPGUAnSMV3qPYdWUwDIjjCLiSDOl7vg==}
@@ -2305,6 +2328,8 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.19.1
 
+  '@opentelemetry/api@1.9.0': {}
+
   '@pinojs/redact@0.4.0': {}
 
   '@pkgjs/parseargs@0.11.0':
@@ -2628,6 +2653,8 @@ snapshots:
   balanced-match@1.0.2: {}
 
   base64-js@1.5.1: {}
+
+  bintrees@1.0.2: {}
 
   boolbase@1.0.0: {}
 
@@ -3353,6 +3380,11 @@ snapshots:
 
   process@0.11.10: {}
 
+  prom-client@15.1.3:
+    dependencies:
+      '@opentelemetry/api': 1.9.0
+      tdigest: 0.1.2
+
   proxy-addr@2.0.7:
     dependencies:
       forwarded: 0.2.0
@@ -3519,6 +3551,10 @@ snapshots:
   supports-color@7.2.0:
     dependencies:
       has-flag: 4.0.0
+
+  tdigest@0.1.2:
+    dependencies:
+      bintrees: 1.0.2
 
   test-exclude@7.0.1:
     dependencies:

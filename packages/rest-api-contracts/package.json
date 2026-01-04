@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/rest-api-contracts",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "Shared API contracts for KB Labs REST/CLI/Studio surfaces",
   "type": "module",
   "main": "./dist/index.js",
@@ -23,6 +23,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@kb-labs/studio-contracts": "link:../../../kb-labs-studio/packages/studio-contracts",
     "zod": "^3.23.8"
   },
   "devDependencies": {
