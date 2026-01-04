@@ -1,7 +1,1 @@
-export {
-  SseEventBridge,
-  type SseEventBridgeOptions,
-  type SseClient,
-} from './sse-event-bridge'
-
-
+export { EventHub, type BroadcastEvent, type RegistryBroadcast, type HealthBroadcast } from './hub';

@@ -27,6 +27,18 @@
       "@kb-labs/core-config/*": [
         "../kb-labs-core/packages/core-config/src/*"
       ],
+      "@kb-labs/core-platform": [
+        "../kb-labs-core/packages/core-platform/src/index.ts"
+      ],
+      "@kb-labs/core-platform/*": [
+        "../kb-labs-core/packages/core-platform/src/*"
+      ],
+      "@kb-labs/core-runtime": [
+        "../kb-labs-core/packages/core-runtime/src/index.ts"
+      ],
+      "@kb-labs/core-runtime/*": [
+        "../kb-labs-core/packages/core-runtime/src/*"
+      ],
       "@kb-labs/core-sys": [
         "../kb-labs-core/packages/core-sys/src/index.ts"
       ],
@@ -39,17 +51,17 @@
       "@kb-labs/core-workspace/*": [
         "../kb-labs-core/packages/core-workspace/src/*"
       ],
-      "@kb-labs/plugin-adapter-rest": [
-        "../kb-labs-plugin/packages/plugin-adapters/rest/src/index.ts"
+      "@kb-labs/plugin-contracts": [
+        "../kb-labs-plugin/packages/plugin-contracts/src/index.ts"
       ],
-      "@kb-labs/plugin-adapter-rest/*": [
-        "../kb-labs-plugin/packages/plugin-adapters/rest/src/*"
+      "@kb-labs/plugin-contracts/*": [
+        "../kb-labs-plugin/packages/plugin-contracts/src/*"
       ],
-      "@kb-labs/plugin-manifest": [
-        "../kb-labs-plugin/packages/plugin-manifest/src/index.ts"
+      "@kb-labs/plugin-execution": [
+        "../kb-labs-plugin/packages/plugin-execution/src/index.ts"
       ],
-      "@kb-labs/plugin-manifest/*": [
-        "../kb-labs-plugin/packages/plugin-manifest/src/*"
+      "@kb-labs/plugin-execution/*": [
+        "../kb-labs-plugin/packages/plugin-execution/src/*"
       ],
       "@kb-labs/plugin-runtime": [
         "../kb-labs-plugin/packages/plugin-runtime/src/index.ts"
@@ -69,11 +81,23 @@
       "@kb-labs/rest-api-core/*": [
         "packages/rest-api-core/src/*"
       ],
+      "@kb-labs/studio-contracts": [
+        "../kb-labs-studio/packages/studio-contracts/src/index.ts"
+      ],
+      "@kb-labs/studio-contracts/*": [
+        "../kb-labs-studio/packages/studio-contracts/src/*"
+      ],
       "@kb-labs/workflow-contracts": [
         "../kb-labs-workflow/packages/workflow-contracts/src/index.ts"
       ],
       "@kb-labs/workflow-contracts/*": [
         "../kb-labs-workflow/packages/workflow-contracts/src/*"
+      ],
+      "@kb-labs/workflow-engine": [
+        "../kb-labs-workflow/packages/workflow-engine/src/index.ts"
+      ],
+      "@kb-labs/workflow-engine/*": [
+        "../kb-labs-workflow/packages/workflow-engine/src/*"
       ]
     }
   }

@@ -7,9 +7,55 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { metricsCollector } from '../middleware/metrics';
 import { getHeaderDebugEntries } from '../diagnostics/header-debug';
+import { getPrometheusMetrics, updateProcessUptime } from '../middleware/prom-metrics';
 
 function formatNumber(value: number, fractionDigits = 2): string {
   return Number.isFinite(value) ? value.toFixed(fractionDigits) : '0';
+}
+
+/**
+ * Calculate percentiles from histogram buckets using linear interpolation
+ */
+function calculatePercentilesFromHistogram(
+  sum: number,
+  count: number,
+  buckets: Array<{ le: string; count: number }>
+): { p50: number; p95: number; p99: number } {
+  if (count === 0) {
+    return { p50: 0, p95: 0, p99: 0 };
+  }
+
+  // Sort buckets by le (upper bound)
+  const sortedBuckets = buckets
+    .map(b => ({ le: b.le === '+Inf' ? Infinity : parseFloat(b.le), count: b.count }))
+    .sort((a, b) => a.le - b.le);
+
+  const calculatePercentile = (percentile: number): number => {
+    const targetCount = count * percentile;
+    let prevCount = 0;
+    let prevBound = 0;
+
+    for (const bucket of sortedBuckets) {
+      if (bucket.count >= targetCount) {
+        // Linear interpolation
+        if (bucket.count === prevCount) {
+          return bucket.le;
+        }
+        const ratio = (targetCount - prevCount) / (bucket.count - prevCount);
+        return prevBound + ratio * (bucket.le - prevBound);
+      }
+      prevCount = bucket.count;
+      prevBound = bucket.le;
+    }
+
+    return sum / count; // Fallback to average
+  };
+
+  return {
+    p50: calculatePercentile(0.50),
+    p95: calculatePercentile(0.95),
+    p99: calculatePercentile(0.99),
+  };
 }
 
 /**
@@ -21,188 +67,73 @@ export function registerMetricsRoutes(
 ): void {
   const basePath = config.basePath;
 
-  // GET /metrics (Prometheus format)
-  server.get(`${basePath}/metrics`, {
-    schema: {
-      response: {
-        200: { type: 'object' },
-      },
-    },
-  }, async (_request, reply) => {
+  // GET /metrics (Prometheus format with real p50/p95/p99)
+  server.get(`${basePath}/metrics`, async (_request, reply) => {
     const metrics = metricsCollector.getMetrics();
-    const pluginSnapshot = metricsCollector.getLastPluginMountSnapshot();
 
-    // Prometheus format
-    const prometheusLines: string[] = [];
+    // Update process uptime before generating metrics
+    updateProcessUptime(metrics.timestamps.startTime);
 
-    // Request count
-    prometheusLines.push(`# HELP http_requests_total Total number of HTTP requests`);
-    prometheusLines.push(`# TYPE http_requests_total counter`);
-    prometheusLines.push(`http_requests_total ${metrics.requests.total}`);
+    // Get prom-client metrics (includes histogram with real percentiles)
+    const promMetrics = await getPrometheusMetrics();
 
-    // Request count by method
-    for (const [method, count] of Object.entries(metrics.requests.byMethod)) {
-      prometheusLines.push(`http_requests_total{method="${method}"} ${count}`);
-    }
+    // Append custom metrics not covered by prom-client
+    const customLines: string[] = [];
 
-    // Request count by status
-    for (const [status, count] of Object.entries(metrics.requests.byStatus)) {
-      prometheusLines.push(`http_requests_total{status="${status}"} ${count}`);
-    }
-
-    // Latency
-    prometheusLines.push(`# HELP http_request_duration_ms HTTP request duration in milliseconds`);
-    prometheusLines.push(`# TYPE http_request_duration_ms summary`);
-    prometheusLines.push(`http_request_duration_ms{quantile="0.5"} ${metrics.latency.average}`);
-    prometheusLines.push(`http_request_duration_ms{quantile="0.95"} ${metrics.latency.max}`);
-    prometheusLines.push(`http_request_duration_ms{quantile="0.99"} ${metrics.latency.max}`);
-    prometheusLines.push(`http_request_duration_ms_sum ${metrics.latency.total}`);
-    prometheusLines.push(`http_request_duration_ms_count ${metrics.latency.count}`);
-
-    // Error count
-    prometheusLines.push(`# HELP http_errors_total Total number of HTTP errors`);
-    prometheusLines.push(`# TYPE http_errors_total counter`);
-    prometheusLines.push(`http_errors_total ${metrics.errors.total}`);
-
-    // Error count by code
-    for (const [code, count] of Object.entries(metrics.errors.byCode)) {
-      prometheusLines.push(`http_errors_total{code="${code}"} ${count}`);
-    }
-
-    // Header policy metrics
-    prometheusLines.push(`# HELP kb_headers_filtered_total Total headers filtered by policy enforcement`);
-    prometheusLines.push(`# TYPE kb_headers_filtered_total counter`);
-    prometheusLines.push(`kb_headers_filtered_total{direction="inbound"} ${metrics.headers.filteredInbound}`);
-    prometheusLines.push(`kb_headers_filtered_total{direction="outbound"} ${metrics.headers.filteredOutbound}`);
-
-    prometheusLines.push(`# HELP kb_headers_sensitive_inbound_total Sensitive inbound headers observed`);
-    prometheusLines.push(`# TYPE kb_headers_sensitive_inbound_total counter`);
-    prometheusLines.push(`kb_headers_sensitive_inbound_total ${metrics.headers.sensitiveInbound}`);
-
-    prometheusLines.push(`# HELP kb_headers_validation_errors_total Header validation errors encountered`);
-    prometheusLines.push(`# TYPE kb_headers_validation_errors_total counter`);
-    prometheusLines.push(`kb_headers_validation_errors_total ${metrics.headers.validationErrors}`);
-
-    prometheusLines.push(`# HELP kb_headers_vary_applied_total Vary header entries applied by policy`);
-    prometheusLines.push(`# TYPE kb_headers_vary_applied_total counter`);
-    prometheusLines.push(`kb_headers_vary_applied_total ${metrics.headers.varyApplied}`);
-
-    prometheusLines.push(`# HELP kb_headers_dry_run_decisions_total Header decisions skipped due to dry-run mode`);
-    prometheusLines.push(`# TYPE kb_headers_dry_run_decisions_total counter`);
-    prometheusLines.push(`kb_headers_dry_run_decisions_total ${metrics.headers.dryRunDecisions}`);
-
-    for (const pluginHeader of metrics.headers.perPlugin) {
-      const pluginLabel = pluginHeader.pluginId || 'unknown';
-      prometheusLines.push(`kb_headers_filtered_total{plugin="${pluginLabel}",direction="inbound"} ${pluginHeader.filteredInbound}`);
-      prometheusLines.push(`kb_headers_filtered_total{plugin="${pluginLabel}",direction="outbound"} ${pluginHeader.filteredOutbound}`);
-      prometheusLines.push(`kb_headers_sensitive_inbound_total{plugin="${pluginLabel}"} ${pluginHeader.sensitiveInbound}`);
-      prometheusLines.push(`kb_headers_validation_errors_total{plugin="${pluginLabel}"} ${pluginHeader.validationErrors}`);
-      prometheusLines.push(`kb_headers_vary_applied_total{plugin="${pluginLabel}"} ${pluginHeader.varyApplied}`);
-    }
-
+    // Route-specific metrics (budget tracking)
     for (const entry of metrics.latency.histogram) {
-      const avg = entry.count > 0 ? entry.total / entry.count : 0;
-      const routeLabels = [`route="${entry.route}"`];
-      if (entry.pluginId) {
-        routeLabels.push(`plugin="${entry.pluginId}"`);
-      }
-      const labelString = routeLabels.join(',');
-
-      prometheusLines.push(`# HELP http_request_route_duration_ms Route-specific request duration statistics`);
-      prometheusLines.push(`# TYPE http_request_route_duration_ms gauge`);
-      prometheusLines.push(`http_request_route_duration_ms_max{${labelString}} ${formatNumber(entry.max)}`);
-      prometheusLines.push(`http_request_route_duration_ms_avg{${labelString}} ${formatNumber(avg)}`);
       if (entry.budgetMs !== null) {
-        prometheusLines.push(`http_request_route_budget_ms{${labelString}} ${formatNumber(entry.budgetMs)}`);
-      }
-      for (const [statusCode, count] of Object.entries(entry.byStatus)) {
-        const statusLabels = [...routeLabels, `status="${statusCode}"`].join(',');
-        prometheusLines.push(`http_request_route_total{${statusLabels}} ${count}`);
-      }
-    }
-
-    if (metrics.perPlugin.length > 0) {
-      prometheusLines.push(`# HELP kb_plugin_request_total Total HTTP requests per plugin`);
-      prometheusLines.push(`# TYPE kb_plugin_request_total gauge`);
-      prometheusLines.push(`# HELP kb_plugin_request_duration_ms Plugin request duration metrics`);
-      prometheusLines.push(`# TYPE kb_plugin_request_duration_ms gauge`);
-      prometheusLines.push(`# HELP kb_plugin_request_status_total Plugin request status code totals`);
-      prometheusLines.push(`# TYPE kb_plugin_request_status_total gauge`);
-
-      for (const pluginMetrics of metrics.perPlugin) {
-        const pluginLabel = pluginMetrics.pluginId ?? 'unknown';
-        const avgDuration =
-          pluginMetrics.total > 0 ? pluginMetrics.totalDuration / pluginMetrics.total : 0;
-
-        prometheusLines.push(`kb_plugin_request_total{plugin="${pluginLabel}"} ${pluginMetrics.total}`);
-        prometheusLines.push(`kb_plugin_request_duration_ms_avg{plugin="${pluginLabel}"} ${formatNumber(avgDuration)}`);
-        prometheusLines.push(`kb_plugin_request_duration_ms_max{plugin="${pluginLabel}"} ${formatNumber(pluginMetrics.maxDuration)}`);
-
-        for (const [statusCode, count] of Object.entries(pluginMetrics.statuses)) {
-          prometheusLines.push(`kb_plugin_request_status_total{plugin="${pluginLabel}",status="${statusCode}"} ${count}`);
+        const routeLabels = [`route="${entry.route}"`];
+        if (entry.pluginId) {
+          routeLabels.push(`plugin="${entry.pluginId}"`);
         }
+        const labelString = routeLabels.join(',');
+        customLines.push(`# HELP http_request_route_budget_ms Route performance budget in milliseconds`);
+        customLines.push(`# TYPE http_request_route_budget_ms gauge`);
+        customLines.push(`http_request_route_budget_ms{${labelString}} ${formatNumber(entry.budgetMs)}`);
       }
     }
 
-    // Tenant metrics (multi-tenancy)
-    if (metrics.perTenant.length > 0) {
-      prometheusLines.push(`# HELP kb_tenant_request_total Total HTTP requests per tenant`);
-      prometheusLines.push(`# TYPE kb_tenant_request_total gauge`);
-      prometheusLines.push(`# HELP kb_tenant_request_errors_total Total HTTP errors per tenant`);
-      prometheusLines.push(`# TYPE kb_tenant_request_errors_total gauge`);
-      prometheusLines.push(`# HELP kb_tenant_request_duration_ms_avg Average request duration per tenant`);
-      prometheusLines.push(`# TYPE kb_tenant_request_duration_ms_avg gauge`);
-
-      for (const tenantMetrics of metrics.perTenant) {
-        prometheusLines.push(`kb_tenant_request_total{tenant="${tenantMetrics.tenantId}"} ${tenantMetrics.total}`);
-        prometheusLines.push(`kb_tenant_request_errors_total{tenant="${tenantMetrics.tenantId}"} ${tenantMetrics.errors}`);
-        prometheusLines.push(`kb_tenant_request_duration_ms_avg{tenant="${tenantMetrics.tenantId}"} ${formatNumber(tenantMetrics.avgLatencyMs)}`);
-      }
-    }
-
+    // Plugin mount snapshot
+    const pluginSnapshot = metricsCollector.getLastPluginMountSnapshot();
     if (pluginSnapshot) {
-      prometheusLines.push(`# HELP kb_plugins_mount_total Plugins processed during last mount run`);
-      prometheusLines.push(`# TYPE kb_plugins_mount_total gauge`);
-      prometheusLines.push(`kb_plugins_mount_total ${pluginSnapshot.total}`);
-      prometheusLines.push(`kb_plugins_mount_succeeded ${pluginSnapshot.succeeded}`);
-      prometheusLines.push(`kb_plugins_mount_failed ${pluginSnapshot.failed}`);
-      prometheusLines.push(`kb_plugins_mount_elapsed_ms ${formatNumber(pluginSnapshot.elapsedMs)}`);
+      customLines.push(`# HELP kb_plugins_mount_total Plugins processed during last mount run`);
+      customLines.push(`# TYPE kb_plugins_mount_total gauge`);
+      customLines.push(`kb_plugins_mount_total ${pluginSnapshot.total}`);
+      customLines.push(`kb_plugins_mount_succeeded ${pluginSnapshot.succeeded}`);
+      customLines.push(`kb_plugins_mount_failed ${pluginSnapshot.failed}`);
+      customLines.push(`kb_plugins_mount_elapsed_ms ${formatNumber(pluginSnapshot.elapsedMs)}`);
     }
 
-    // Redis metrics
-    prometheusLines.push(`# HELP kb_redis_status_updates_total Redis status updates observed`);
-    prometheusLines.push(`# TYPE kb_redis_status_updates_total counter`);
-    prometheusLines.push(`kb_redis_status_updates_total ${metrics.redis.updates}`);
+    // Redis metrics (not in prom-client)
+    customLines.push(`# HELP kb_redis_status_updates_total Redis status updates observed`);
+    customLines.push(`# TYPE kb_redis_status_updates_total counter`);
+    customLines.push(`kb_redis_status_updates_total ${metrics.redis.updates}`);
 
-    prometheusLines.push(`# HELP kb_redis_status_transitions_total Redis health transitions`);
-    prometheusLines.push(`# TYPE kb_redis_status_transitions_total counter`);
-    prometheusLines.push(`kb_redis_status_transitions_total{state="healthy"} ${metrics.redis.healthyTransitions}`);
-    prometheusLines.push(`kb_redis_status_transitions_total{state="unhealthy"} ${metrics.redis.unhealthyTransitions}`);
+    customLines.push(`# HELP kb_redis_status_transitions_total Redis health transitions`);
+    customLines.push(`# TYPE kb_redis_status_transitions_total counter`);
+    customLines.push(`kb_redis_status_transitions_total{state="healthy"} ${metrics.redis.healthyTransitions}`);
+    customLines.push(`kb_redis_status_transitions_total{state="unhealthy"} ${metrics.redis.unhealthyTransitions}`);
 
     if (metrics.redis.lastStatus) {
       const healthyValue = metrics.redis.lastStatus.healthy ? 1 : 0;
-      prometheusLines.push(`# HELP kb_redis_healthy Redis healthy flag (1 = healthy)`);
-      prometheusLines.push(`# TYPE kb_redis_healthy gauge`);
-      prometheusLines.push(`kb_redis_healthy ${healthyValue}`);
+      customLines.push(`# HELP kb_redis_healthy Redis healthy flag (1 = healthy)`);
+      customLines.push(`# TYPE kb_redis_healthy gauge`);
+      customLines.push(`kb_redis_healthy ${healthyValue}`);
 
       for (const roleEntry of metrics.redis.roleStates) {
         for (const stateEntry of roleEntry.states) {
-          const safeState = stateEntry.state.replace(/"/g, '\"');
-          prometheusLines.push(
+          const safeState = stateEntry.state.replace(/"/g, '\\"');
+          customLines.push(
             `kb_redis_role_state_total{role="${roleEntry.role}",state="${safeState}"} ${stateEntry.count}`,
           );
         }
       }
     }
 
-    // Uptime
-    const uptime = (Date.now() - metrics.timestamps.startTime) / 1000;
-    prometheusLines.push(`# HELP process_uptime_seconds Process uptime in seconds`);
-    prometheusLines.push(`# TYPE process_uptime_seconds gauge`);
-    prometheusLines.push(`process_uptime_seconds ${uptime}`);
-
+    // Combine prom-client metrics with custom metrics
     reply.header('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
-    return prometheusLines.join('\n');
+    return promMetrics + '\n' + customLines.join('\n');
   });
 
   server.get(`${basePath}/metrics/headers/debug`, {
@@ -230,25 +161,68 @@ export function registerMetricsRoutes(
     };
   });
 
-  // GET /metrics/json (JSON format)
-  server.get(`${basePath}/metrics/json`, {
-    schema: {
-      response: {
-        200: { type: 'object' },
-      },
-    },
-  }, async (_request, _reply) => {
+  // GET /metrics/json (JSON format with real p50/p95/p99)
+  server.get(`${basePath}/metrics/json`, async (_request, reply) => {
     const metrics = metricsCollector.getMetrics();
     const pluginSnapshot = metricsCollector.getLastPluginMountSnapshot();
 
-    // Return only data - envelope middleware will wrap it
+    // Get prom-client metrics to extract histogram data
+    const promMetricsText = await getPrometheusMetrics();
+
+    // Parse histogram buckets for http_request_duration_ms
+    const bucketMap = new Map<string, number>(); // le -> cumulative count
+    let totalSum = 0;
+    let totalCount = 0;
+
+    for (const line of promMetricsText.split('\n')) {
+      // Parse bucket lines: http_request_duration_ms_bucket{...} <count>
+      const bucketMatch = line.match(/^http_request_duration_ms_bucket\{[^}]*le="([^"]+)"[^}]*\}\s+(\d+(?:\.\d+)?)/);
+      if (bucketMatch && bucketMatch[1] && bucketMatch[2]) {
+        const le = bucketMatch[1];
+        const count = parseFloat(bucketMatch[2]);
+        // Aggregate counts for same le across different labels
+        bucketMap.set(le, (bucketMap.get(le) || 0) + count);
+      }
+
+      // Parse sum: http_request_duration_ms_sum{...} <sum>
+      const sumMatch = line.match(/^http_request_duration_ms_sum\{[^}]*\}\s+(\d+(?:\.\d+)?)/);
+      if (sumMatch) {
+        totalSum += parseFloat(sumMatch[1]);
+      }
+
+      // Parse count: http_request_duration_ms_count{...} <count>
+      const countMatch = line.match(/^http_request_duration_ms_count\{[^}]*\}\s+(\d+(?:\.\d+)?)/);
+      if (countMatch) {
+        totalCount += parseFloat(countMatch[1]);
+      }
+    }
+
+    // Convert map to array for percentile calculation
+    const histogramBuckets = Array.from(bucketMap.entries()).map(([le, count]) => ({ le, count }));
+
+    // Calculate percentiles from aggregated histogram data
+    const percentiles = calculatePercentilesFromHistogram(totalSum, totalCount, histogramBuckets);
+
+    // Return data with enhanced latency metrics
     return {
-      ...metrics,
+      requests: metrics.requests,
+      latency: {
+        ...metrics.latency,
+        p50: percentiles.p50,
+        p95: percentiles.p95,
+        p99: percentiles.p99,
+      },
+      perPlugin: metrics.perPlugin,
+      perTenant: metrics.perTenant,
+      errors: metrics.errors,
+      timestamps: metrics.timestamps,
+      headers: metrics.headers,
+      redis: metrics.redis,
       pluginMounts: pluginSnapshot ?? null,
       uptime: {
         seconds: (Date.now() - metrics.timestamps.startTime) / 1000,
         startTime: new Date(metrics.timestamps.startTime).toISOString(),
-        lastRequest: metrics.timestamps.lastRequest 
+        lastRequest: metrics.timestamps.lastRequest
           ? new Date(metrics.timestamps.lastRequest).toISOString()
           : null,
       },

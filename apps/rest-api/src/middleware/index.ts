@@ -14,7 +14,6 @@ import { registerMetricsMiddleware } from './metrics';
 import { registerErrorGuard } from './error-guard';
 import { registerStartupGuard } from './startup-guard';
 import { registerRequestTimeoutGuard } from './request-timeout';
-import { registerHeaderPolicyMiddleware } from './header-policy';
 
 /**
  * Register all middleware
@@ -27,12 +26,11 @@ export function registerMiddleware(
   registerSecurityHeadersMiddleware(server);
   registerRequestIdMiddleware(server);
   registerMockModeMiddleware(server, config);
-  registerHeaderPolicyMiddleware(server);
   registerCacheMiddleware(server);
   registerRequestTimeoutGuard(server, config);
   registerMetricsMiddleware(server);
   registerEnvelopeMiddleware(server, config);
-  
+
   // Global error guard for plugin routes (must be last)
   registerErrorGuard(server);
 }

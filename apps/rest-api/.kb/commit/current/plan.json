@@ -1,0 +1,248 @@
+{
+  "schemaVersion": "1.0",
+  "createdAt": "2026-01-02T14:08:23.316Z",
+  "repoRoot": "/Users/kirillbaranov/Desktop/kb-labs/kb-labs-rest-api/apps/rest-api",
+  "gitStatus": {
+    "staged": [],
+    "unstaged": [
+      ".gitignore",
+      "apps/rest-api/package.json",
+      "apps/rest-api/src/bootstrap.ts",
+      "apps/rest-api/src/events/index.ts",
+      "apps/rest-api/src/middleware/envelope.ts",
+      "apps/rest-api/src/middleware/index.ts",
+      "apps/rest-api/src/middleware/metrics.ts",
+      "apps/rest-api/src/middleware/request-id.ts",
+      "apps/rest-api/src/routes/__tests__/workflows.spec.ts",
+      "apps/rest-api/src/routes/events.ts",
+      "apps/rest-api/src/routes/health.ts",
+      "apps/rest-api/src/routes/index.ts",
+      "apps/rest-api/src/routes/metrics.ts",
+      "apps/rest-api/src/routes/plugins.ts",
+      "apps/rest-api/src/server.ts",
+      "packages/rest-api-contracts/package.json",
+      "packages/rest-api-contracts/src/index.ts",
+      "packages/rest-api-contracts/src/studio.ts",
+      "packages/rest-api-core/package.json",
+      "packages/rest-api-core/src/config/loader.ts",
+      "packages/rest-api-core/src/index.ts",
+      "pnpm-lock.yaml",
+      "tsconfig.paths.json",
+      "apps/rest-api/src/events/sse-event-bridge.ts",
+      "apps/rest-api/src/middleware/__tests__/header-policy.spec.ts",
+      "apps/rest-api/src/middleware/header-policy.ts",
+      "apps/rest-api/src/plugins/cli-discovery.ts",
+      "apps/rest-api/src/plugins/compat.ts",
+      "apps/rest-api/src/plugins/discovery.ts"
+    ],
+    "untracked": [
+      "apps/rest-api/.kb/commit/current/plan.json",
+      "apps/rest-api/.kb/commit/current/status.json",
+      "apps/rest-api/src/middleware/__tests__/cache.spec.ts",
+      "apps/rest-api/src/middleware/__tests__/envelope.spec.ts",
+      "apps/rest-api/src/middleware/__tests__/rate-limit.spec.ts",
+      "apps/rest-api/src/middleware/__tests__/request-id.spec.ts",
+      "apps/rest-api/src/middleware/prom-metrics.ts",
+      "apps/rest-api/src/platform.ts",
+      "apps/rest-api/src/routes/__tests__/adapters-date-helpers.spec.ts",
+      "apps/rest-api/src/routes/__tests__/adapters.spec.ts",
+      "apps/rest-api/src/routes/adapters.ts",
+      "apps/rest-api/src/routes/analytics.ts",
+      "apps/rest-api/src/routes/cache.ts",
+      "apps/rest-api/src/routes/logs.ts",
+      "apps/rest-api/src/routes/observability.ts",
+      "apps/rest-api/src/routes/platform.ts",
+      "apps/rest-api/src/routes/workflow-management.ts",
+      "packages/rest-api-contracts/src/observability.ts",
+      "packages/rest-api-contracts/src/platform.ts",
+      "packages/rest-api-core/src/__tests__/config-schema.spec.ts",
+      "packages/rest-api-core/src/__tests__/studio-registry.spec.ts",
+      "packages/rest-api-core/src/studio-registry.ts"
+    ]
+  },
+  "commits": [
+    {
+      "id": "c1",
+      "type": "chore",
+      "scope": "rest-api",
+      "message": "update dependencies",
+      "files": [
+        "apps/rest-api/package.json",
+        "apps/rest-api/.kb/commit/current/plan.json",
+        "apps/rest-api/.kb/commit/current/status.json"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c2",
+      "type": "chore",
+      "scope": "rest-api-contracts",
+      "message": "update dependencies",
+      "files": [
+        "packages/rest-api-contracts/package.json"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c3",
+      "type": "chore",
+      "scope": "rest-api-core",
+      "message": "update dependencies",
+      "files": [
+        "packages/rest-api-core/package.json",
+        "packages/rest-api-core/src/__tests__/config-schema.spec.ts"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c4",
+      "type": "feat",
+      "scope": "middleware",
+      "message": "add 2 files",
+      "files": [
+        "apps/rest-api/src/middleware/header-policy.ts",
+        "apps/rest-api/src/middleware/__tests__/header-policy.spec.ts"
+      ],
+      "releaseHint": "minor",
+      "breaking": false
+    },
+    {
+      "id": "c5",
+      "type": "feat",
+      "scope": "middleware",
+      "message": "add 2 files",
+      "files": [
+        "apps/rest-api/src/middleware/envelope.ts",
+        "apps/rest-api/src/middleware/__tests__/envelope.spec.ts"
+      ],
+      "releaseHint": "minor",
+      "breaking": false
+    },
+    {
+      "id": "c6",
+      "type": "feat",
+      "scope": "middleware",
+      "message": "add 2 files",
+      "files": [
+        "apps/rest-api/src/middleware/request-id.ts",
+        "apps/rest-api/src/middleware/__tests__/request-id.spec.ts"
+      ],
+      "releaseHint": "minor",
+      "breaking": false
+    },
+    {
+      "id": "c7",
+      "type": "feat",
+      "scope": "routes",
+      "message": "add 2 files",
+      "files": [
+        "apps/rest-api/src/routes/adapters.ts",
+        "apps/rest-api/src/routes/__tests__/adapters.spec.ts"
+      ],
+      "releaseHint": "minor",
+      "breaking": false
+    },
+    {
+      "id": "c8",
+      "type": "feat",
+      "message": "add 2 files",
+      "files": [
+        "packages/rest-api-core/src/studio-registry.ts",
+        "packages/rest-api-core/src/__tests__/studio-registry.spec.ts"
+      ],
+      "releaseHint": "minor",
+      "breaking": false
+    },
+    {
+      "id": "c9",
+      "type": "chore",
+      "message": "update configuration",
+      "files": [
+        ".gitignore",
+        "tsconfig.paths.json"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c10",
+      "type": "chore",
+      "message": "update configuration",
+      "files": [
+        "apps/rest-api/src/bootstrap.ts",
+        "apps/rest-api/src/events/index.ts",
+        "apps/rest-api/src/middleware/index.ts",
+        "apps/rest-api/src/middleware/metrics.ts",
+        "apps/rest-api/src/routes/events.ts",
+        "apps/rest-api/src/routes/health.ts",
+        "apps/rest-api/src/routes/index.ts",
+        "apps/rest-api/src/routes/metrics.ts",
+        "apps/rest-api/src/routes/plugins.ts",
+        "apps/rest-api/src/server.ts",
+        "apps/rest-api/src/events/sse-event-bridge.ts",
+        "apps/rest-api/src/plugins/cli-discovery.ts",
+        "apps/rest-api/src/plugins/compat.ts",
+        "apps/rest-api/src/plugins/discovery.ts",
+        "apps/rest-api/src/middleware/prom-metrics.ts",
+        "apps/rest-api/src/platform.ts",
+        "apps/rest-api/src/routes/analytics.ts",
+        "apps/rest-api/src/routes/cache.ts",
+        "apps/rest-api/src/routes/logs.ts",
+        "apps/rest-api/src/routes/observability.ts",
+        "apps/rest-api/src/routes/platform.ts",
+        "apps/rest-api/src/routes/workflow-management.ts"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c11",
+      "type": "chore",
+      "scope": "packages",
+      "message": "update configuration",
+      "files": [
+        "packages/rest-api-contracts/src/index.ts",
+        "packages/rest-api-contracts/src/studio.ts",
+        "packages/rest-api-core/src/config/loader.ts",
+        "packages/rest-api-core/src/index.ts",
+        "packages/rest-api-contracts/src/observability.ts",
+        "packages/rest-api-contracts/src/platform.ts"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c12",
+      "type": "chore",
+      "scope": ".",
+      "message": "update configuration",
+      "files": [
+        "pnpm-lock.yaml"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    },
+    {
+      "id": "c13",
+      "type": "test",
+      "message": "add 4 test files",
+      "files": [
+        "apps/rest-api/src/routes/__tests__/workflows.spec.ts",
+        "apps/rest-api/src/middleware/__tests__/cache.spec.ts",
+        "apps/rest-api/src/middleware/__tests__/rate-limit.spec.ts",
+        "apps/rest-api/src/routes/__tests__/adapters-date-helpers.spec.ts"
+      ],
+      "releaseHint": "none",
+      "breaking": false
+    }
+  ],
+  "metadata": {
+    "totalFiles": 51,
+    "totalCommits": 13,
+    "llmUsed": false,
+    "escalated": false
+  }
+}

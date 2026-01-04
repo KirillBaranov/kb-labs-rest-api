@@ -67,3 +67,4 @@ analytics/
 
 # DevKit provenance
 .kb/devkit/tmp/.npmrc
+.kb/cache

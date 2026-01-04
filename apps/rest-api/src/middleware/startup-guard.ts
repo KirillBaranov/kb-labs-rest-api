@@ -81,13 +81,12 @@ export function registerStartupGuard(
     request.kbStartupGuardTimer = timer;
 
     if (counters.inFlight > maxConcurrent) {
-      request.log.warn(
-        {
+      if ((request as any).kbLogger) {
+        (request as any).kbLogger.warn('Startup guard concurrency threshold exceeded', {
           inFlight: counters.inFlight,
           maxConcurrent,
-        },
-        'Startup guard concurrency threshold exceeded'
-      );
+        });
+      }
     }
 
     done();

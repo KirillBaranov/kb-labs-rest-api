@@ -21,7 +21,13 @@ const BASE_CONFIG: RestApiConfig = {
 const SAMPLE_SPEC = {
   name: 'demo',
   version: '1.0.0',
-  jobs: {},
+  on: { manual: true },
+  jobs: {
+    build: {
+      runsOn: 'local',
+      steps: [{ name: 'echo', uses: 'builtin:shell', with: { command: 'echo hello' } }],
+    },
+  },
 }
 
 function createApp(cliApi: Partial<CliAPI>) {

@@ -1,0 +1,472 @@
+{
+  "schemaVersion": "1.0",
+  "createdAt": "2026-01-02T14:08:23.750Z",
+  "status": {
+    "staged": [],
+    "unstaged": [
+      ".gitignore",
+      "apps/rest-api/package.json",
+      "apps/rest-api/src/bootstrap.ts",
+      "apps/rest-api/src/events/index.ts",
+      "apps/rest-api/src/middleware/envelope.ts",
+      "apps/rest-api/src/middleware/index.ts",
+      "apps/rest-api/src/middleware/metrics.ts",
+      "apps/rest-api/src/middleware/request-id.ts",
+      "apps/rest-api/src/routes/__tests__/workflows.spec.ts",
+      "apps/rest-api/src/routes/events.ts",
+      "apps/rest-api/src/routes/health.ts",
+      "apps/rest-api/src/routes/index.ts",
+      "apps/rest-api/src/routes/metrics.ts",
+      "apps/rest-api/src/routes/plugins.ts",
+      "apps/rest-api/src/server.ts",
+      "packages/rest-api-contracts/package.json",
+      "packages/rest-api-contracts/src/index.ts",
+      "packages/rest-api-contracts/src/studio.ts",
+      "packages/rest-api-core/package.json",
+      "packages/rest-api-core/src/config/loader.ts",
+      "packages/rest-api-core/src/index.ts",
+      "pnpm-lock.yaml",
+      "tsconfig.paths.json",
+      "apps/rest-api/src/events/sse-event-bridge.ts",
+      "apps/rest-api/src/middleware/__tests__/header-policy.spec.ts",
+      "apps/rest-api/src/middleware/header-policy.ts",
+      "apps/rest-api/src/plugins/cli-discovery.ts",
+      "apps/rest-api/src/plugins/compat.ts",
+      "apps/rest-api/src/plugins/discovery.ts"
+    ],
+    "untracked": [
+      "apps/rest-api/.kb/commit/current/plan.json",
+      "apps/rest-api/.kb/commit/current/status.json",
+      "apps/rest-api/src/middleware/__tests__/cache.spec.ts",
+      "apps/rest-api/src/middleware/__tests__/envelope.spec.ts",
+      "apps/rest-api/src/middleware/__tests__/rate-limit.spec.ts",
+      "apps/rest-api/src/middleware/__tests__/request-id.spec.ts",
+      "apps/rest-api/src/middleware/prom-metrics.ts",
+      "apps/rest-api/src/platform.ts",
+      "apps/rest-api/src/routes/__tests__/adapters-date-helpers.spec.ts",
+      "apps/rest-api/src/routes/__tests__/adapters.spec.ts",
+      "apps/rest-api/src/routes/adapters.ts",
+      "apps/rest-api/src/routes/analytics.ts",
+      "apps/rest-api/src/routes/cache.ts",
+      "apps/rest-api/src/routes/logs.ts",
+      "apps/rest-api/src/routes/observability.ts",
+      "apps/rest-api/src/routes/platform.ts",
+      "apps/rest-api/src/routes/workflow-management.ts",
+      "packages/rest-api-contracts/src/observability.ts",
+      "packages/rest-api-contracts/src/platform.ts",
+      "packages/rest-api-core/src/__tests__/config-schema.spec.ts",
+      "packages/rest-api-core/src/__tests__/studio-registry.spec.ts",
+      "packages/rest-api-core/src/studio-registry.ts"
+    ]
+  },
+  "summaries": [
+    {
+      "path": ".gitignore",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/package.json",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/bootstrap.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/events/index.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/envelope.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/index.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/metrics.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/request-id.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/__tests__/workflows.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/events.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/health.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/index.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/metrics.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/plugins.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/server.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-contracts/package.json",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-contracts/src/index.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-contracts/src/studio.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-core/package.json",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-core/src/config/loader.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-core/src/index.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "tsconfig.paths.json",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/events/sse-event-bridge.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/__tests__/header-policy.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/header-policy.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/plugins/cli-discovery.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/plugins/compat.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/plugins/discovery.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/.kb/commit/current/plan.json",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/.kb/commit/current/status.json",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/__tests__/cache.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/__tests__/envelope.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/__tests__/rate-limit.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/__tests__/request-id.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/middleware/prom-metrics.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/platform.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/__tests__/adapters-date-helpers.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/__tests__/adapters.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/adapters.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/analytics.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/cache.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/logs.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/observability.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/platform.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "apps/rest-api/src/routes/workflow-management.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-contracts/src/observability.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-contracts/src/platform.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-core/src/__tests__/config-schema.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-core/src/__tests__/studio-registry.spec.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    },
+    {
+      "path": "packages/rest-api-core/src/studio-registry.ts",
+      "status": "added",
+      "additions": 0,
+      "deletions": 0,
+      "binary": false,
+      "isNewFile": true
+    }
+  ]
+}

@@ -6,13 +6,15 @@
 import { loadRestApiConfig } from '@kb-labs/rest-api-core';
 import { createServer } from './server';
 import { findRepoRoot } from '@kb-labs/core-sys';
-import { createCliAPI } from '@kb-labs/cli-api';
-import { setCliApi, disposeCliApi } from './plugins/cli-discovery';
+import { createCliAPI, type CliAPI } from '@kb-labs/cli-api';
+import { initializePlatform } from './platform';
+import { platform } from '@kb-labs/core-runtime';
 import * as path from 'node:path';
-import { promises as fs } from 'node:fs';
-import { initLogging, getLogger } from '@kb-labs/core-sys/logging';
-import type { LogLevel } from '@kb-labs/core-sys';
+import { promises as fs, readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+
+// Singleton CLI API instance for cleanup
+let cliApiInstance: CliAPI | null = null;
 
 /**
  * Find monorepo root (prefer pnpm-workspace.yaml with kb-* patterns)
@@ -101,28 +103,77 @@ async function findMonorepoRoot(startDir: string): Promise<string> {
 }
 
 /**
+ * Load environment variables from .env file
+ * Does not overwrite existing variables
+ */
+function loadEnvFile(cwd: string): void {
+  const envPath = path.join(cwd, '.env');
+
+  if (!existsSync(envPath)) {
+    return;
+  }
+
+  try {
+    const content = readFileSync(envPath, 'utf-8');
+    const lines = content.split('\n');
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+
+      // Skip comments and empty lines
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue;
+      }
+
+      // Parse KEY=VALUE
+      const equalIndex = trimmed.indexOf('=');
+      if (equalIndex === -1) {
+        continue;
+      }
+
+      const key = trimmed.substring(0, equalIndex).trim();
+      const value = trimmed.substring(equalIndex + 1).trim();
+
+      // Remove quotes if present
+      const unquotedValue = value
+        .replace(/^["'](.*)["']$/, '$1')
+        .replace(/^`(.*)`$/, '$1');
+
+      // Set only if variable is not already set
+      if (key && !(key in process.env)) {
+        process.env[key] = unquotedValue;
+      }
+    }
+  } catch (error) {
+    // Silently ignore .env loading errors
+    // Not critical for server operation
+  }
+}
+
+/**
  * Bootstrap REST API server
  */
 export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
-  const logLevel = resolveLogLevel(process.env.REST_LOG_LEVEL);
-  
-  // Initialize logging with unified system
-  initLogging({
-    level: logLevel,
-    mode: 'json', // REST API uses JSON output
-  });
-  
-  const bootstrapLogger = getLogger('rest:bootstrap').child({
-    meta: {
-      layer: 'rest',
-      traceId: randomUUID(),
-      reqId: 'rest-bootstrap',
-    },
+  // Load .env file if present (does not overwrite existing variables)
+  loadEnvFile(cwd);
+
+  // Load configuration first (before platform init, to avoid circular dependency)
+  const { config, diagnostics } = await loadRestApiConfig(cwd);
+
+  // Detect repo root (prefer monorepo root with kb-* patterns)
+  const repoRoot = await findMonorepoRoot(cwd);
+
+  // Initialize platform adapters from kb.config.json
+  // This will initialize logger based on kb.config.json configuration
+  await initializePlatform(repoRoot);
+
+  // Now we can use platform.logger (configured from kb.config.json)
+  const bootstrapLogger = platform.logger.child({
+    layer: 'rest',
+    service: 'bootstrap',
+    traceId: randomUUID(),
   });
 
-  // Load configuration
-  const { config, diagnostics } = await loadRestApiConfig(cwd);
-  
   if (diagnostics.length > 0) {
     bootstrapLogger.warn('Configuration diagnostics', { diagnosticsCount: diagnostics.length });
     for (const diagnostic of diagnostics) {
@@ -133,9 +184,8 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     }
   }
 
-  // Detect repo root (prefer monorepo root with kb-* patterns)
-  const repoRoot = await findMonorepoRoot(cwd);
   bootstrapLogger.info('Resolved repo root', { cwd, repoRoot });
+  bootstrapLogger.info('Platform adapters initialized');
 
   // Initialize CLI API singleton
   bootstrapLogger.info('Initializing CLI API');
@@ -162,6 +212,14 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     });
   }
   
+  // Registry snapshot TTL based on environment
+  // Development: 10 minutes (frequent changes, but not too aggressive)
+  // Production: 1 hour (stable deployments, less churn)
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  const snapshotTTL = isDevelopment
+    ? 10 * 60 * 1000  // 10 minutes for development
+    : 60 * 60 * 1000; // 1 hour for production
+
   const cliApi = await createCliAPI({
     discovery: {
       strategies: ['workspace', 'pkg', 'dir', 'file'],
@@ -170,10 +228,10 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     },
     cache: {
       inMemory: true,
-      ttlMs: 30_000,
+      ttlMs: snapshotTTL,
     },
     logger: {
-      level: logLevel,
+      level: 'info', // CLI API internal logging level
     },
     snapshot: {
       mode: 'producer', // REST API should produce snapshots, not consume them
@@ -198,8 +256,8 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     pluginIds: plugins.map(p => `${p.id}@${p.version}`),
   });
   
-  // Set singleton for cli-discovery
-  setCliApi(cliApi);
+  // Store singleton for cleanup
+  cliApiInstance = cliApi;
   
   // Subscribe to changes
   cliApi.onChange((diff: { added: unknown[]; removed: unknown[]; changed: unknown[] }) => {
@@ -226,10 +284,17 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   // Setup graceful shutdown
   const shutdown = async (signal: string) => {
     bootstrapLogger.warn('Received shutdown signal', { signal });
-    
+
     // Dispose CLI API
-    await disposeCliApi();
-    
+    if (cliApiInstance) {
+      await cliApiInstance.dispose();
+      cliApiInstance = null;
+    }
+
+    // Shutdown platform (includes ExecutionBackend and all adapters)
+    await platform.shutdown();
+    bootstrapLogger.info('Platform shutdown complete');
+
     // Close server
     await server.close();
     bootstrapLogger.info('Server closed');
@@ -239,15 +304,3 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
 }
-
-function resolveLogLevel(level: unknown): LogLevel {
-  if (!level) {
-    return 'info';
-  }
-  const normalized = String(level).toLowerCase();
-  if (normalized === 'debug' || normalized === 'info' || normalized === 'warn' || normalized === 'error') {
-    return normalized;
-  }
-  return 'info';
-}
-

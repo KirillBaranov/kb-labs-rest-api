@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import { ulid } from 'ulid';
-import { getLogger } from '@kb-labs/core-sys/logging';
+import { platform } from '@kb-labs/core-runtime';
 
 /**
  * Register request ID middleware
@@ -19,25 +19,20 @@ export function registerRequestIdMiddleware(server: FastifyInstance): void {
     reply.header('X-Request-Id', requestId);
     reply.header('X-Trace-Id', traceId);
 
-    const requestLogger = getLogger('rest:request').child({
-      meta: {
-        layer: 'rest',
-        reqId: requestId,
-        traceId,
-        method: request.method,
-        url: request.url,
-      },
+    // Store logger metadata on request for metrics middleware to use
+    (request as any).kbLogger = platform.logger.child({
+      layer: 'rest',
+      service: 'request',
+      reqId: requestId,
+      traceId,
+      method: request.method,
+      url: request.url,
     });
 
-    (request as any).log = {
-      debug: (msg: string, fields?: Record<string, unknown>) => requestLogger.debug(msg, fields),
-      info: (msg: string, fields?: Record<string, unknown>) => requestLogger.info(msg, fields),
-      warn: (msg: string, fields?: Record<string, unknown>) => requestLogger.warn(msg, fields),
-      error: (msg: string, fields?: Record<string, unknown> | Error) => requestLogger.error(msg, fields),
-    };
-    (reply as any).log = (request as any).log;
-
-    requestLogger.info('Request received');
+    // Log request received
+    const method = request.method.toUpperCase();
+    const fullUrl = request.url;
+    (request as any).kbLogger.info(`→ ${method} ${fullUrl}`);
   });
 }
 
