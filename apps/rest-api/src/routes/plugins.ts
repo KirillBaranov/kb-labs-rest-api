@@ -1,18 +1,19 @@
 /**
  * @module @kb-labs/rest-api-app/routes/plugins
  * Plugin routes registration
+ *
+ * Uses @kb-labs/plugin-execution for unified execution layer.
  */
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
-import type { ManifestV2 } from '@kb-labs/plugin-manifest';
-import { mountRoutes } from '@kb-labs/plugin-adapter-rest';
-import { execute as runtimeExecute } from '@kb-labs/plugin-runtime';
-import { toRegistry, combineRegistries } from '@kb-labs/plugin-adapter-studio';
-import type { StudioRegistry } from '@kb-labs/rest-api-contracts';
-import { getV2Manifests, type PluginManifestWithPath } from '../plugins/compat';
+import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import { mountRoutes } from '@kb-labs/plugin-execution/http';
+import { combineManifestsToRegistry } from '@kb-labs/rest-api-core';
+import { platform } from '@kb-labs/core-runtime';
 import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
 import type { ReadinessState } from './readiness';
 import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
 import { metricsCollector } from '../middleware/metrics';
@@ -20,7 +21,7 @@ import { performance } from 'node:perf_hooks';
 
 interface SnapshotManifestEntry {
   pluginId: string;
-  manifest: ManifestV2;
+  manifest: ManifestV3;
   pluginRoot: string;
 }
 
@@ -89,6 +90,9 @@ export async function registerPluginRoutes(
       }, 'Registry snapshot is partial or stale');
     }
 
+    // Use platform's unified ExecutionBackend (initialized in bootstrap.ts)
+    const backend = platform.executionBackend;
+
     // Prepare mount tasks for parallel execution
     const mountTasks = manifests
       .filter(entry => entry.manifest.rest?.routes && entry.manifest.rest.routes.length > 0)
@@ -99,14 +103,13 @@ export async function registerPluginRoutes(
         const restValidationErrors: string[] = [];
         if (manifest.rest?.routes) {
           const manifestDir = pluginRoot;
-          const fs = await import('fs/promises');
           for (const route of manifest.rest.routes) {
             const handlerRef = route.handler;
-            const [handlerFile, exportName] = handlerRef.split('#');
+            const handlerFile = handlerRef.split('#')[0];
 
-            if (!exportName || !handlerFile) {
+            if (!handlerFile) {
               restValidationErrors.push(
-                `Route ${route.method} ${route.path}: Invalid handler reference "${handlerRef}" (must include export name)`
+                `Route ${route.method} ${route.path}: Invalid handler reference "${handlerRef}"`
               );
               continue;
             }
@@ -134,32 +137,32 @@ export async function registerPluginRoutes(
             const match = error.match(/Route\s+(\w+)\s+([^\s:]+)/);
             return match ? `${match[1]} ${match[2]}` : null;
           }).filter(Boolean));
-          
-          const validRoutes = manifest.rest.routes.filter((route) => {
+
+          const validRoutes = manifest.rest!.routes!.filter((route) => {
             const routeKey = `${route.method} ${route.path}`;
             return !errorPaths.has(routeKey);
           });
-          
+
           if (validRoutes.length === 0) {
             server.log.error({
               plugin: `${manifest.id}@${manifest.version}`,
               pluginRoot,
               errors: restValidationErrors,
             }, 'All routes failed validation, skipping plugin');
-            return { 
-              success: false, 
+            return {
+              success: false,
               pluginId: manifest.id,
               error: true,
               routesCount: 0,
               failureError: summarizeValidationErrors(restValidationErrors),
             };
           }
-          
+
           // Replace routes with only valid ones
-          manifest.rest.routes = validRoutes;
+          manifest.rest!.routes = validRoutes;
           server.log.info({
             plugin: `${manifest.id}@${manifest.version}`,
-            totalRoutes: manifest.rest.routes.length + restValidationErrors.length,
+            totalRoutes: manifest.rest!.routes.length + restValidationErrors.length,
             validRoutes: validRoutes.length,
             skippedRoutes: restValidationErrors.length,
           }, 'Filtered routes, mounting valid ones');
@@ -180,50 +183,35 @@ export async function registerPluginRoutes(
             routes: manifest.rest?.routes?.length ?? 0,
           }, 'Mounting plugin routes');
 
-          await mountRoutes(
-            server as any,
-            manifest,
-            {
-              execute: runtimeExecute as any,
-            },
-            {
-              grantedCapabilities: (() => {
-                if (!config.plugins) {
-                  return [];
-                }
-                if (Array.isArray(config.plugins)) {
-                  return config.plugins as string[];
-                }
-                if (typeof config.plugins === 'object' && 'grantedCapabilities' in config.plugins) {
-                  const gc = (config.plugins as { grantedCapabilities?: unknown }).grantedCapabilities;
-                  return Array.isArray(gc) ? (gc as string[]) : [];
-                }
-                return [];
-              })(),
-              basePath: pluginBasePath,
-              pluginRoot,
-              workdir: workspaceRoot,
-              fallbackTimeoutMs: gatewayTimeoutMs,
-              rateLimit: config.rateLimit,
-              onRouteMounted: info => {
-                metricsCollector.registerRouteBudget(
-                  info.method,
-                  info.path,
-                  info.timeoutMs,
-                  manifest.id
-                );
-              },
-            }
-          );
+          // Use new plugin-execution API
+          await mountRoutes(server, manifest, {
+            backend,
+            pluginRoot,
+            workspaceRoot,
+            basePath: pluginBasePath,
+            defaultTimeoutMs: gatewayTimeoutMs,
+          });
+
           const duration = performance.now() - start;
           const routesCount = manifest.rest?.routes?.length ?? 0;
+
+          // Register route budgets for metrics
+          for (const route of manifest.rest?.routes ?? []) {
+            metricsCollector.registerRouteBudget(
+              route.method,
+              `${pluginBasePath}${route.path}`,
+              route.timeoutMs ?? gatewayTimeoutMs,
+              manifest.id
+            );
+          }
+
           mountMetrics.recordSuccess(manifest.id, routesCount, duration);
           server.log.info({
             plugin: `${manifest.id}@${manifest.version}`,
             durationMs: Number(duration.toFixed(2)),
           }, 'Successfully mounted plugin routes');
-          return { 
-            success: true, 
+          return {
+            success: true,
             pluginId: manifest.id,
             error: false,
             routesCount,
@@ -234,8 +222,8 @@ export async function registerPluginRoutes(
             plugin: manifest.id,
             err: error instanceof Error ? error : new Error(String(error)),
           }, 'Failed to mount plugin routes');
-          return { 
-            success: false, 
+          return {
+            success: false,
             pluginId: manifest.id,
             error: true,
             routesCount: 0,
@@ -247,14 +235,14 @@ export async function registerPluginRoutes(
     // Execute all mount tasks in parallel
     // Use allSettled to ensure all plugins are processed even if some fail
     const results = await Promise.allSettled(mountTasks);
-    
+
     // Aggregate stats from results (avoid race conditions)
     let mountedRoutes = 0;
     let errors = 0;
     const succeeded: string[] = [];
     const failed: string[] = [];
     const routeFailures: Array<{ id: string; error: string }> = [];
-    
+
     for (const result of results) {
       if (result.status === 'fulfilled') {
         const value = result.value;
@@ -282,14 +270,14 @@ export async function registerPluginRoutes(
         }
       }
     }
-    
+
     // Update stats and readiness (safely, after all parallel operations complete)
     stats.mountedRoutes = mountedRoutes;
     stats.errors = errors;
     if (readiness) {
       readiness.pluginRouteFailures = routeFailures;
     }
-    
+
     // Log summary
     server.log.info({
       total: mountTasks.length,
@@ -333,23 +321,6 @@ export async function registerPluginRoutes(
 }
 
 /**
- * Get all plugin manifests (for OpenAPI generation)
- */
-export async function getAllPluginManifests(
-  repoRoot: string
-): Promise<ManifestV2[]> {
-  const { v2Manifests } = await getV2Manifests(repoRoot);
-  return v2Manifests;
-}
-
-export async function getAllPluginManifestsWithPaths(
-  repoRoot: string
-): Promise<PluginManifestWithPath[]> {
-  const { manifestsWithPaths } = await getV2Manifests(repoRoot);
-  return manifestsWithPaths;
-}
-
-/**
  * Register plugin registry endpoint for Studio
  */
 export async function registerPluginRegistry(
@@ -363,15 +334,34 @@ export async function registerPluginRegistry(
   server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
     try {
       const snapshot = cliApi.snapshot();
-      const manifests = snapshot.manifests.map(entry => ({
-        pluginId: entry.pluginId,
-        manifest: entry.manifest,
-        pluginRoot: entry.pluginRoot,
-        source: entry.source,
-      }));
+
+      // Get build timestamps by checking dist/ mtime for each plugin
+      const manifestsWithTimestamps = await Promise.all(
+        snapshot.manifests.map(async (entry) => {
+          let buildTimestamp: string | undefined;
+          try {
+            const distPath = path.join(entry.pluginRoot, 'dist');
+            const stats = await fs.stat(distPath);
+            buildTimestamp = stats.mtime.toISOString();
+          } catch {
+            // dist/ doesn't exist or not accessible, skip
+          }
+
+          return {
+            pluginId: entry.pluginId,
+            manifest: entry.manifest,
+            pluginRoot: entry.pluginRoot,
+            source: entry.source,
+            discoveredAt: snapshot.generatedAt,
+            buildTimestamp,
+          };
+        })
+      );
+
       reply.type('application/json');
       return {
-        manifests,
+        manifests: manifestsWithTimestamps,
+        apiBasePath: basePath,
       };
     } catch (error) {
       server.log.error({
@@ -391,25 +381,15 @@ export async function registerPluginRegistry(
       const snapshot = cliApi.snapshot();
       const manifests = extractSnapshotManifests(snapshot);
 
-      // Convert manifests with studio section to StudioRegistry
-      const registries = manifests
+      // Convert manifests to StudioRegistry
+      const studioManifests = manifests
         .filter(entry => entry.manifest.studio)
-        .map(entry => toRegistry(entry.manifest));
+        .map(entry => entry.manifest);
 
-      // Combine all registries into one
-      const combined = registries.length > 0
-        ? combineRegistries(...registries)
-        : { plugins: [], widgets: [], menus: [], layouts: [] };
-
-      const studioRegistry: StudioRegistry = {
-        schema: 'kb.studio-registry/1',
-        registryVersion: String(snapshot.rev),
-        generatedAt: new Date().toISOString(),
-        plugins: combined.plugins,
-        widgets: combined.widgets,
-        menus: combined.menus,
-        layouts: combined.layouts,
-      };
+      const studioRegistry = combineManifestsToRegistry(
+        studioManifests,
+        String(snapshot.rev)
+      );
 
       reply.type('application/json');
       return studioRegistry;
@@ -423,6 +403,77 @@ export async function registerPluginRegistry(
       });
     }
   });
+
+  // AI Assistant endpoint: ask questions about a plugin
+  server.post(`${basePath}/plugins/:pluginId/ask`, async (request, reply) => {
+    try {
+      const { pluginId } = request.params as { pluginId: string };
+      const { question } = request.body as { question: string };
+
+      if (!question || typeof question !== 'string') {
+        reply.code(400).send({
+          error: 'Bad request',
+          message: 'Question is required and must be a string',
+        });
+        return;
+      }
+
+      // Get plugin manifest
+      const snapshot = cliApi.snapshot();
+      const pluginEntry = snapshot.manifests.find((entry) => entry.pluginId === pluginId);
+
+      if (!pluginEntry) {
+        reply.code(404).send({
+          error: 'Plugin not found',
+          message: `Plugin ${pluginId} not found in registry`,
+        });
+        return;
+      }
+
+      // Build prompt for LLM
+      const systemPrompt = `You are a helpful assistant that explains KB Labs plugins based on their manifest.
+Provide clear, concise answers about the plugin's capabilities, API endpoints, permissions, and usage.
+Be specific and reference the actual values from the manifest.`;
+
+      const userPrompt = `Plugin Manifest:
+${JSON.stringify(pluginEntry.manifest, null, 2)}
+
+User Question: ${question}
+
+Please answer the question based on the plugin manifest above.`;
+
+      // Call LLM
+      const response = await platform.llm.complete(userPrompt, {
+        systemPrompt,
+        temperature: 0.3,
+        maxTokens: 1000,
+      });
+
+      reply.type('application/json');
+      return {
+        answer: response.content,
+        usage: response.usage,
+      };
+    } catch (error) {
+      server.log.error({
+        err: error instanceof Error ? error : new Error(String(error)),
+      }, 'Failed to get AI answer about plugin');
+      reply.code(500).send({
+        error: 'Failed to get AI answer',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+}
+
+/**
+ * Shutdown execution backend gracefully.
+ * NOTE: ExecutionBackend is now owned by platform, shutdown via platform.shutdown()
+ */
+export async function shutdownExecutionBackend(): Promise<void> {
+  // ExecutionBackend lifecycle is now managed by platform
+  // Call platform.shutdown() instead to shutdown all services including executionBackend
+  await platform.shutdown();
 }
 
 function summarizeValidationErrors(errors: string[]): string {
@@ -442,4 +493,3 @@ function shortErrorMessage(error: unknown): string {
   const firstLine = message.trim().split('\n')[0] ?? message.trim();
   return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
 }
-

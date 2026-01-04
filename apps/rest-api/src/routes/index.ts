@@ -13,9 +13,17 @@ import { registerOpenAPIRoutes } from './openapi';
 import { registerMetricsRoutes } from './metrics';
 import { registerPluginRoutes, registerPluginRegistry } from './plugins';
 import { registerWorkflowRoutes } from './workflows';
+import { registerWorkflowManagementRoutes } from './workflow-management';
+import { registerCacheRoutes } from './cache';
+import { registerObservabilityRoutes } from './observability';
+import { registerAnalyticsRoutes } from './analytics';
+import { registerAdaptersRoutes } from './adapters';
+import { registerLogRoutes } from './logs';
+import { registerPlatformRoutes } from './platform';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
 import { metricsCollector } from '../middleware/metrics';
+import { getPlatformServices } from '../platform';
 
 function normalizeBasePath(basePath?: string): string {
   if (!basePath || basePath === '/') {
@@ -230,6 +238,22 @@ export async function registerRoutes(
   await registerPluginRegistry(server, config, cliApi);
 
   await registerWorkflowRoutes(server, config, cliApi);
+
+  // Register workflow management endpoints (new endpoints for CRUD and scheduling)
+  const platform = getPlatformServices();
+  await registerWorkflowManagementRoutes(server, config, cliApi, platform);
+
+  await registerCacheRoutes(server, config, cliApi);
+
+  await registerObservabilityRoutes(server, config, repoRoot);
+
+  await registerAnalyticsRoutes(server, config);
+
+  await registerAdaptersRoutes(server, config);
+
+  await registerLogRoutes(server, config, eventHub);
+
+  await registerPlatformRoutes(server, config, repoRoot);
 
   await registerEventRoutes(server, basePath, cliApi, readiness, eventHub, config);
 }
