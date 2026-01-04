@@ -61,10 +61,83 @@ Configuration loaded from `kb-labs.config.json`:
 {
   "restApi": {
     "port": 3000,
-    "host": "localhost",
+    "basePath": "/api/v1",
+    "apiVersion": "1.0.0",
     "cors": {
+      "origins": ["http://localhost:3000", "http://localhost:5173"],
+      "allowCredentials": true,
+      "profile": "dev"
+    },
+    "timeouts": {
+      "requestTimeout": 30000,
+      "bodyLimit": 10485760
+    },
+    "http2": {
+      "enabled": false,
+      "allowHTTP1": true
+    },
+    "ssl": {
+      "keyPath": "/path/to/server.key",
+      "certPath": "/path/to/server.cert"
+    }
+  }
+}
+```
+
+### HTTP/2 Configuration
+
+HTTP/2 can be enabled to remove connection pool limits (HTTP/1.1 has 6 concurrent connections per domain):
+
+**Benefits:**
+- Removes 6 connection limit (important for SSE connections)
+- Request multiplexing over single TCP connection
+- Header compression and server push support
+- Backward compatible with HTTP/1.1 (via `allowHTTP1` flag)
+
+**Requirements:**
+- HTTPS with valid SSL certificates
+- Modern browser (95%+ support)
+
+**Generate self-signed certificates for development:**
+
+```bash
+# Create ssl directory
+mkdir -p ssl
+
+# Generate self-signed certificate (valid for localhost)
+openssl req -x509 -newkey rsa:2048 -nodes \
+  -keyout ssl/server.key \
+  -out ssl/server.cert \
+  -days 365 \
+  -subj "/CN=localhost"
+```
+
+**For production (Let's Encrypt):**
+
+```bash
+# Install certbot
+sudo apt install certbot
+
+# Generate certificate
+sudo certbot certonly --standalone -d your-domain.com
+
+# Certificates will be in:
+# /etc/letsencrypt/live/your-domain.com/privkey.pem (key)
+# /etc/letsencrypt/live/your-domain.com/fullchain.pem (cert)
+```
+
+**Configuration:**
+
+```json
+{
+  "restApi": {
+    "http2": {
       "enabled": true,
-      "origins": ["*"]
+      "allowHTTP1": true
+    },
+    "ssl": {
+      "keyPath": "ssl/server.key",
+      "certPath": "ssl/server.cert"
     }
   }
 }

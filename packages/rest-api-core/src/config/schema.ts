@@ -47,6 +47,18 @@ export const restApiConfigSchema = z.object({
         .optional(),
     })
     .optional(),
+  http2: z
+    .object({
+      enabled: z.boolean().default(false),
+      allowHTTP1: z.boolean().default(true), // Fallback for old clients
+    })
+    .optional(),
+  ssl: z
+    .object({
+      keyPath: z.string().min(1),
+      certPath: z.string().min(1),
+    })
+    .optional(),
 });
 
 export type RestApiConfig = z.infer<typeof restApiConfigSchema>;

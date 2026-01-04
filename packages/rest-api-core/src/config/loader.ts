@@ -29,7 +29,7 @@ export async function loadRestApiConfig(
     // If bundle loading fails (product not registered), try direct config loading
     const { path: configPath } = await findNearestConfig({
       startDir: cwd,
-      filenames: ['kb-labs.config.json', 'kb-labs.config.yaml'],
+      filenames: ['.kb/kb.config.json', '.kb/kb.config.yaml'],
     });
     
     if (configPath) {
