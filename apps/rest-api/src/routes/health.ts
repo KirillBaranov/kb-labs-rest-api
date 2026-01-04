@@ -64,7 +64,7 @@ export async function registerHealthRoutes(
           registryStale: readiness.registryStale,
           registryLoaded: readiness.registryLoaded,
         });
-        reply.send(response);
+        return reply.send(response);
       } catch (error) {
         const fallback = buildFallbackSnapshot(error, readiness);
         const ready = isReady(readiness);
@@ -79,7 +79,7 @@ export async function registerHealthRoutes(
           registryStale: readiness.registryStale,
           registryLoaded: readiness.registryLoaded,
         });
-        reply.send(fallback);
+        return reply.send(fallback);
       }
     });
   }
@@ -94,7 +94,6 @@ export async function registerHealthRoutes(
 
       const response = buildReadinessResponse(readiness);
       const statusCode = response.ready ? 200 : 503;
-      reply.code(statusCode).send(response);
 
       eventHub?.publish({
         type: 'health',
@@ -112,6 +111,8 @@ export async function registerHealthRoutes(
         pluginsMounted: metricsCollector.getLastPluginMountSnapshot()?.succeeded ?? 0,
         pluginsFailed: metricsCollector.getLastPluginMountSnapshot()?.failed ?? 0,
       });
+
+      return reply.code(statusCode).send(response);
     });
   }
 }

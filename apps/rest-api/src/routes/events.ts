@@ -23,6 +23,16 @@ export async function registerEventRoutes(
     url: endpoint,
     onRequest: authHook ? [authHook] : undefined,
     handler: async (request, reply) => {
+      // Tell Fastify we're manually managing the response
+      reply.hijack();
+
+      // Explicit CORS headers for EventSource (browser requires these before opening connection)
+      const origin = request.headers.origin;
+      if (origin === 'http://localhost:3000' || origin === 'http://localhost:5173') {
+        reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+        reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
+
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache, no-transform');
       reply.raw.setHeader('Connection', 'keep-alive');
@@ -79,7 +89,9 @@ export async function registerEventRoutes(
           });
         })
         .catch((error: unknown) => {
-          request.log.warn({ err: error }, 'Failed to fetch system health for SSE client');
+          if ((request as any).kbLogger) {
+            (request as any).kbLogger.warn('Failed to fetch system health for SSE client', { err: error });
+          }
         });
 
       request.raw.on('close', () => {
@@ -87,6 +99,7 @@ export async function registerEventRoutes(
         reply.raw.end();
       });
 
+      // Keep connection alive indefinitely
       await new Promise<void>(() => {});
     },
   });

@@ -192,7 +192,9 @@ export async function registerWorkflowRoutes(
           onEvent: sendEvent,
         })
       } catch (error) {
-        request.log.warn({ err: error }, 'Workflow log streaming failed')
+        if ((request as any).kbLogger) {
+          (request as any).kbLogger.warn('Workflow log streaming failed', { err: error });
+        }
       } finally {
         reply.raw.end()
       }
@@ -249,7 +251,9 @@ export async function registerWorkflowRoutes(
           onEvent: handleEvent,
         })
       } catch (error) {
-        request.log.warn({ err: error }, 'Workflow event streaming failed')
+        if ((request as any).kbLogger) {
+          (request as any).kbLogger.warn('Workflow event streaming failed', { err: error });
+        }
       } finally {
         reply.raw.end()
       }
@@ -264,7 +268,9 @@ function parseInlineSpec(value: unknown, request: FastifyRequest): WorkflowSpec 
   if (typeof value === 'object' && value !== null) {
     const result = WorkflowSpecSchema.safeParse(value)
     if (!result.success) {
-      request.log.error({ issues: result.error.issues }, 'Invalid inline workflow spec object')
+      if ((request as any).kbLogger) {
+        (request as any).kbLogger.error('Invalid inline workflow spec object', undefined, { issues: result.error.issues });
+      }
       throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec must match WorkflowSpec schema')
     }
     return result.data
@@ -277,12 +283,16 @@ function parseInlineSpec(value: unknown, request: FastifyRequest): WorkflowSpec 
       }
       const result = WorkflowSpecSchema.safeParse(parsed)
       if (!result.success) {
-        request.log.error({ issues: result.error.issues }, 'Invalid inline workflow spec JSON')
+        if ((request as any).kbLogger) {
+          (request as any).kbLogger.error('Invalid inline workflow spec JSON', undefined, { issues: result.error.issues });
+        }
         throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec JSON must match WorkflowSpec schema')
       }
       return result.data
     } catch (error) {
-      request.log.error({ err: error }, 'Failed to parse inline workflow spec')
+      if ((request as any).kbLogger) {
+        (request as any).kbLogger.error('Failed to parse inline workflow spec', undefined, { err: error });
+      }
       throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec must be valid JSON object')
     }
   }

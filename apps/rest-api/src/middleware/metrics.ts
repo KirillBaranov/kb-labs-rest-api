@@ -1,6 +1,14 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyInstance } from 'fastify';
 import type { RedisStatus } from '@kb-labs/cli-api';
+import {
+  httpRequestDuration,
+  httpRequestsTotal,
+  httpErrorsTotal,
+  tenantRequestsTotal,
+  tenantErrorsTotal,
+  tenantRequestDuration,
+} from './prom-metrics';
 
 /**
  * @module @kb-labs/rest-api-app/middleware/metrics
@@ -163,7 +171,11 @@ class PluginsMetricsCollector {
 }
 
 interface MetricsSnapshot {
-  requests: Metrics['requests'];
+  requests: Metrics['requests'] & {
+    success: number;
+    clientErrors: number;
+    serverErrors: number;
+  };
   latency: Omit<Metrics['latency'], 'histogram'> & {
     histogram: Array<{
       route: string;
@@ -485,8 +497,18 @@ class MetricsCollector {
       avgLatencyMs: stats.total > 0 ? stats.totalLatency / stats.total : 0,
     }));
 
+    // Calculate success/error counts from byStatus
+    const success = (this.metrics.requests.byStatus['2xx'] || 0) + (this.metrics.requests.byStatus['3xx'] || 0);
+    const clientErrors = this.metrics.requests.byStatus['4xx'] || 0;
+    const serverErrors = this.metrics.requests.byStatus['5xx'] || 0;
+
     return {
-      requests: { ...this.metrics.requests },
+      requests: {
+        ...this.metrics.requests,
+        success,
+        clientErrors,
+        serverErrors,
+      },
       latency: {
         total: this.metrics.latency.total,
         count: this.metrics.latency.count,
@@ -598,10 +620,61 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     // Extract tenantId from header or env var
     const tenantId = (request.headers['x-tenant-id'] as string | undefined) ?? process.env.KB_TENANT_ID ?? 'default';
 
+    // Log request completion with method + full URL + status code + duration
+    if ((request as any).kbLogger) {
+      const fullUrl = request.url;
+      const durationMs = Math.round(duration);
+      (request as any).kbLogger.info(`✓ ${method} ${fullUrl} ${reply.statusCode} ${durationMs}ms`, {
+        statusCode: reply.statusCode,
+        durationMs,
+      });
+    }
+
+    // Record to legacy collector
     metricsCollector.recordRequest(method, routePath ?? request.url, reply.statusCode, duration, tenantId);
     if (reply.statusCode >= 400) {
       metricsCollector.recordError(String(reply.statusCode));
     }
+
+    // Record to prom-client metrics
+    const normalizedRoute = normalizeRoute(routePath ?? request.url) ?? 'unknown';
+    const statusCode = String(reply.statusCode);
+
+    // Record request duration histogram (automatically calculates p50/p95/p99)
+    httpRequestDuration.observe(
+      {
+        method,
+        route: normalizedRoute,
+        status_code: statusCode,
+        tenant: tenantId,
+        plugin: '', // Will be populated from route metadata if available
+      },
+      duration
+    );
+
+    // Record request counter
+    httpRequestsTotal.inc({
+      method,
+      route: normalizedRoute,
+      status_code: statusCode,
+      tenant: tenantId,
+      plugin: '',
+    });
+
+    // Record errors
+    if (reply.statusCode >= 400) {
+      httpErrorsTotal.inc({
+        status_code: statusCode,
+        error_code: String((reply as any).errorCode ?? reply.statusCode),
+        tenant: tenantId,
+      });
+      tenantErrorsTotal.inc({ tenant: tenantId });
+    }
+
+    // Record tenant metrics
+    tenantRequestsTotal.inc({ tenant: tenantId });
+    tenantRequestDuration.observe({ tenant: tenantId }, duration);
+
     done();
   });
 }
