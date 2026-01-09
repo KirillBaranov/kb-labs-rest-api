@@ -131,3 +131,54 @@ export interface DevKitHealthPayload {
     command: string;
   };
 }
+
+/**
+ * Historical data point
+ */
+export interface HistoricalDataPoint {
+  /** Unix timestamp in milliseconds */
+  timestamp: number;
+  /** Metric value */
+  value: number;
+}
+
+/**
+ * Heatmap cell data (7 days × 24 hours)
+ */
+export interface HeatmapCell {
+  /** Day of week: 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun' */
+  day: string;
+  /** Hour of day: 0-23 */
+  hour: number;
+  /** Aggregated metric value */
+  value: number;
+}
+
+/**
+ * Response payload for GET /api/v1/observability/metrics/history
+ */
+export interface MetricsHistoryPayload {
+  ok: true;
+  data: HistoricalDataPoint[];
+  meta: {
+    source: 'historical-metrics-collector';
+    metric: 'requests' | 'errors' | 'latency' | 'uptime';
+    range: '1m' | '5m' | '10m' | '30m' | '1h';
+    interval: '5s' | '1m' | '5m';
+    points: number;
+  };
+}
+
+/**
+ * Response payload for GET /api/v1/observability/metrics/heatmap
+ */
+export interface MetricsHeatmapPayload {
+  ok: true;
+  data: HeatmapCell[];
+  meta: {
+    source: 'historical-metrics-collector';
+    metric: 'latency' | 'errors' | 'requests';
+    days: 7 | 14 | 30;
+    cells: number;
+  };
+}
