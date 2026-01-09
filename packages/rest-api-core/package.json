@@ -39,5 +39,6 @@
     "@kb-labs/devkit": "link:../../../kb-labs-devkit",
     "tsup": "^8.5.0",
     "@types/node": "^24.3.3"
-  }
+  },
+  "private": true
 }
