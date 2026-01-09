@@ -45,6 +45,7 @@
   "devDependencies": {
     "@kb-labs/devkit": "link:../../../kb-labs-devkit",
     "@types/node": "^20.10.0",
+    "nodemon": "^3.1.11",
     "tsup": "^8",
     "tsx": "^4.20.5",
     "typescript": "^5",
