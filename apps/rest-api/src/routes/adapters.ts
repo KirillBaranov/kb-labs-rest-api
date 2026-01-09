@@ -15,6 +15,7 @@ interface LLMUsageStats {
   totalRequests: number;
   totalTokens: number;
   totalCost: number;
+  costPer1KTokens: number; // Enhanced: Cost efficiency metric
   byModel: Record<
     string,
     {
@@ -23,10 +24,23 @@ interface LLMUsageStats {
       completionTokens: number;
       totalTokens: number;
       cost: number;
+      costPer1KTokens: number; // Enhanced: Cost per 1K tokens for this model
       avgDurationMs: number;
+      // Enhanced: Latency percentiles
+      p50DurationMs: number;
+      p95DurationMs: number;
+      p99DurationMs: number;
     }
   >;
   errors: number;
+  // Enhanced: Error breakdown by type
+  errorBreakdown: {
+    timeout: number;
+    rateLimit: number;
+    invalidRequest: number;
+    serverError: number;
+    other: number;
+  };
   timeRange: {
     from: string;
     to: string;
@@ -145,13 +159,24 @@ export async function registerAdaptersRoutes(
           totalRequests: 0,
           totalTokens: 0,
           totalCost: 0,
+          costPer1KTokens: 0,
           byModel: {},
           errors: errorEvents.events.length,
+          errorBreakdown: {
+            timeout: 0,
+            rateLimit: 0,
+            invalidRequest: 0,
+            serverError: 0,
+            other: 0,
+          },
           timeRange: {
             from: '',
             to: '',
           },
         };
+
+        // Collect durations per model for percentile calculation
+        const durationsByModel: Record<string, number[]> = {};
 
         // Process completed events
         for (const event of completedEvents.events) {
@@ -175,8 +200,13 @@ export async function registerAdaptersRoutes(
               completionTokens: 0,
               totalTokens: 0,
               cost: 0,
+              costPer1KTokens: 0,
               avgDurationMs: 0,
+              p50DurationMs: 0,
+              p95DurationMs: 0,
+              p99DurationMs: 0,
             };
+            durationsByModel[model] = [];
           }
 
           const modelStats = stats.byModel[model]!;
@@ -187,6 +217,56 @@ export async function registerAdaptersRoutes(
           modelStats.cost += estimatedCost;
           modelStats.avgDurationMs =
             (modelStats.avgDurationMs * (modelStats.requests - 1) + durationMs) / modelStats.requests;
+
+          // Collect duration for percentile calculation
+          durationsByModel[model]!.push(durationMs);
+        }
+
+        // Process error events for breakdown
+        for (const event of errorEvents.events) {
+          const props = getEventData(event);
+          const errorType = String(props.errorType || props.errorCode || '').toLowerCase();
+          const errorMessage = String(props.error || props.message || '').toLowerCase();
+
+          // Categorize error by type
+          if (errorType.includes('timeout') || errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
+            stats.errorBreakdown.timeout++;
+          } else if (errorType.includes('rate') || errorType.includes('quota') || errorMessage.includes('rate limit') || errorMessage.includes('quota exceeded')) {
+            stats.errorBreakdown.rateLimit++;
+          } else if (errorType.includes('invalid') || errorType.includes('validation') || errorMessage.includes('invalid request') || errorMessage.includes('bad request')) {
+            stats.errorBreakdown.invalidRequest++;
+          } else if (errorType.includes('server') || errorType.includes('5xx') || errorMessage.includes('internal error') || errorMessage.includes('server error')) {
+            stats.errorBreakdown.serverError++;
+          } else {
+            stats.errorBreakdown.other++;
+          }
+        }
+
+        // Calculate percentiles and cost per 1K tokens for each model
+        for (const [model, durations] of Object.entries(durationsByModel)) {
+          const modelStats = stats.byModel[model]!;
+
+          // Calculate percentiles
+          if (durations.length > 0) {
+            const sorted = durations.slice().sort((a, b) => a - b);
+            const p50Index = Math.floor(sorted.length * 0.5);
+            const p95Index = Math.floor(sorted.length * 0.95);
+            const p99Index = Math.floor(sorted.length * 0.99);
+
+            modelStats.p50DurationMs = sorted[p50Index] ?? 0;
+            modelStats.p95DurationMs = sorted[p95Index] ?? 0;
+            modelStats.p99DurationMs = sorted[p99Index] ?? 0;
+          }
+
+          // Calculate cost per 1K tokens
+          if (modelStats.totalTokens > 0) {
+            modelStats.costPer1KTokens = (modelStats.cost / modelStats.totalTokens) * 1000;
+          }
+        }
+
+        // Calculate overall cost per 1K tokens
+        if (stats.totalTokens > 0) {
+          stats.costPer1KTokens = (stats.totalCost / stats.totalTokens) * 1000;
         }
 
         // Calculate time range
@@ -374,8 +454,21 @@ export async function registerAdaptersRoutes(
           totalRequests: completedEvents.events.length,
           totalTextLength: 0,
           totalCost: 0,
+          costPer1KChars: 0, // Enhanced: Cost efficiency metric
           errors: errorEvents.events.length,
+          // Enhanced: Error breakdown by type
+          errorBreakdown: {
+            timeout: 0,
+            rateLimit: 0,
+            invalidRequest: 0,
+            serverError: 0,
+            other: 0,
+          },
           avgDurationMs: 0,
+          // Enhanced: Latency percentiles
+          p50DurationMs: 0,
+          p95DurationMs: 0,
+          p99DurationMs: 0,
           batchRequests: 0,
           singleRequests: 0,
           avgBatchSize: 0,
@@ -383,6 +476,7 @@ export async function registerAdaptersRoutes(
 
         let totalDuration = 0;
         let totalBatchSize = 0;
+        const durations: number[] = [];
 
         for (const event of completedEvents.events) {
           const props = getEventData(event);
@@ -395,6 +489,7 @@ export async function registerAdaptersRoutes(
           stats.totalTextLength += textLength;
           stats.totalCost += cost;
           totalDuration += duration;
+          durations.push(duration);
 
           if (batchSize > 1) {
             stats.batchRequests++;
@@ -406,6 +501,43 @@ export async function registerAdaptersRoutes(
 
         stats.avgDurationMs = stats.totalRequests > 0 ? totalDuration / stats.totalRequests : 0;
         stats.avgBatchSize = stats.batchRequests > 0 ? totalBatchSize / stats.batchRequests : 0;
+
+        // Calculate percentiles
+        if (durations.length > 0) {
+          const sorted = durations.slice().sort((a, b) => a - b);
+          const p50Index = Math.floor(sorted.length * 0.5);
+          const p95Index = Math.floor(sorted.length * 0.95);
+          const p99Index = Math.floor(sorted.length * 0.99);
+
+          stats.p50DurationMs = sorted[p50Index] ?? 0;
+          stats.p95DurationMs = sorted[p95Index] ?? 0;
+          stats.p99DurationMs = sorted[p99Index] ?? 0;
+        }
+
+        // Calculate cost per 1K characters
+        if (stats.totalTextLength > 0) {
+          stats.costPer1KChars = (stats.totalCost / stats.totalTextLength) * 1000;
+        }
+
+        // Process error events for breakdown
+        for (const event of errorEvents.events) {
+          const props = getEventData(event);
+          const errorType = String(props.errorType || props.errorCode || '').toLowerCase();
+          const errorMessage = String(props.error || props.message || '').toLowerCase();
+
+          // Categorize error by type
+          if (errorType.includes('timeout') || errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
+            stats.errorBreakdown.timeout++;
+          } else if (errorType.includes('rate') || errorType.includes('quota') || errorMessage.includes('rate limit') || errorMessage.includes('quota exceeded')) {
+            stats.errorBreakdown.rateLimit++;
+          } else if (errorType.includes('invalid') || errorType.includes('validation') || errorMessage.includes('invalid request') || errorMessage.includes('bad request')) {
+            stats.errorBreakdown.invalidRequest++;
+          } else if (errorType.includes('server') || errorType.includes('5xx') || errorMessage.includes('internal error') || errorMessage.includes('server error')) {
+            stats.errorBreakdown.serverError++;
+          } else {
+            stats.errorBreakdown.other++;
+          }
+        }
 
         return { ok: true, data: stats, meta: { source: 'analytics-adapter' } };
       } catch (error) {
@@ -532,6 +664,10 @@ export async function registerAdaptersRoutes(
           upsertOperations: upsertEvents.events.length,
           deleteOperations: deleteEvents.events.length,
           avgSearchDuration: 0,
+          // Enhanced: Search latency percentiles
+          p50SearchDuration: 0,
+          p95SearchDuration: 0,
+          p99SearchDuration: 0,
           avgSearchScore: 0,
           avgResultsCount: 0,
           totalVectorsUpserted: 0,
@@ -541,6 +677,7 @@ export async function registerAdaptersRoutes(
         let totalSearchDuration = 0;
         let totalSearchScore = 0;
         let totalResultsCount = 0;
+        const searchDurations: number[] = [];
 
         for (const event of searchEvents.events) {
           const props = getEventData(event);
@@ -552,11 +689,24 @@ export async function registerAdaptersRoutes(
           totalSearchDuration += duration;
           totalSearchScore += avgScore;
           totalResultsCount += resultsCount;
+          searchDurations.push(duration);
         }
 
         stats.avgSearchDuration = stats.searchQueries > 0 ? totalSearchDuration / stats.searchQueries : 0;
         stats.avgSearchScore = stats.searchQueries > 0 ? totalSearchScore / stats.searchQueries : 0;
         stats.avgResultsCount = stats.searchQueries > 0 ? totalResultsCount / stats.searchQueries : 0;
+
+        // Calculate search latency percentiles
+        if (searchDurations.length > 0) {
+          const sorted = searchDurations.slice().sort((a, b) => a - b);
+          const p50Index = Math.floor(sorted.length * 0.5);
+          const p95Index = Math.floor(sorted.length * 0.95);
+          const p99Index = Math.floor(sorted.length * 0.99);
+
+          stats.p50SearchDuration = sorted[p50Index] ?? 0;
+          stats.p95SearchDuration = sorted[p95Index] ?? 0;
+          stats.p99SearchDuration = sorted[p99Index] ?? 0;
+        }
 
         for (const event of upsertEvents.events) {
           const props = getEventData(event);
