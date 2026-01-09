@@ -20,10 +20,13 @@ import { registerAnalyticsRoutes } from './analytics';
 import { registerAdaptersRoutes } from './adapters';
 import { registerLogRoutes } from './logs';
 import { registerPlatformRoutes } from './platform';
+import { registerDebugRoutes, registerRouteCollector } from './debug-routes';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
 import { metricsCollector } from '../middleware/metrics';
 import { getPlatformServices } from '../platform';
+import { HistoricalMetricsCollector } from '../services/historical-metrics';
+import { IncidentStorage } from '../services/incident-storage';
 
 function normalizeBasePath(basePath?: string): string {
   if (!basePath || basePath === '/') {
@@ -41,6 +44,10 @@ export async function registerRoutes(
   repoRoot: string,
   cliApi: CliAPI
 ): Promise<void> {
+  // Register route collector hook FIRST, before any routes are registered
+  // This allows us to collect all routes for the /routes endpoint
+  registerRouteCollector(server);
+
   const initialSnapshot = cliApi.snapshot();
   const initialRedisStatus = cliApi.getRedisStatus?.();
   const initialRedisStates = initialRedisStatus?.roles ?? {
@@ -245,7 +252,39 @@ export async function registerRoutes(
 
   await registerCacheRoutes(server, config, cliApi);
 
-  await registerObservabilityRoutes(server, config, repoRoot);
+  // Initialize historical metrics collector
+  const historicalCollector = new HistoricalMetricsCollector(
+    platform.cache,
+    {
+      intervalMs: 5000, // Collect every 5 seconds
+      debug: process.env.NODE_ENV !== 'production',
+    },
+    server.log
+  );
+
+  // Start background collection
+  historicalCollector.start();
+  server.log.info('Historical metrics collector started');
+
+  // Stop collector on server close
+  server.addHook('onClose', async () => {
+    historicalCollector.stop();
+    server.log.info('Historical metrics collector stopped');
+  });
+
+  // Initialize incident storage
+  const incidentStorage = new IncidentStorage(
+    platform.cache,
+    {
+      ttlMs: 30 * 24 * 60 * 60 * 1000, // 30 days
+      maxIncidents: 1000,
+      debug: process.env.NODE_ENV !== 'production',
+    },
+    server.log
+  );
+  server.log.info('Incident storage initialized');
+
+  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, incidentStorage);
 
   await registerAnalyticsRoutes(server, config);
 
@@ -254,6 +293,8 @@ export async function registerRoutes(
   await registerLogRoutes(server, config, eventHub);
 
   await registerPlatformRoutes(server, config, repoRoot);
+
+  await registerDebugRoutes(server, config);
 
   await registerEventRoutes(server, basePath, cliApi, readiness, eventHub, config);
 }
