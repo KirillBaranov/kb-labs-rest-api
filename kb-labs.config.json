@@ -25,6 +25,31 @@
     "cors": {
       "origins": ["http://localhost:3000"],
       "allowCredentials": true
+    },
+    "logger": {
+      "level": "debug",
+      "transport": {
+        "targets": [
+          {
+            "target": "pino/file",
+            "level": "debug",
+            "options": {
+              "destination": ".kb/logs/rest-api.log",
+              "mkdir": true
+            }
+          },
+          {
+            "target": "pino-pretty",
+            "level": "debug",
+            "options": {
+              "destination": 1,
+              "colorize": true,
+              "translateTime": "HH:MM:ss",
+              "ignore": "pid,hostname"
+            }
+          }
+        ]
+      }
     }
   }
 }
