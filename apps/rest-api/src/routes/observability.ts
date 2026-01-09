@@ -5,6 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
+import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -12,6 +13,11 @@ import type { HistoricalMetricsCollector } from '../services/historical-metrics'
 import type { IncidentStorage } from '../services/incident-storage';
 
 const execAsync = promisify(exec);
+
+// DevKit health cache key and TTL (10 minutes)
+// This prevents excessive process spawning that can overload the system
+const DEVKIT_CACHE_KEY = 'observability:devkit-health';
+const DEVKIT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Register observability routes
@@ -24,7 +30,8 @@ export async function registerObservabilityRoutes(
   config: RestApiConfig,
   repoRoot: string,
   historicalMetrics?: HistoricalMetricsCollector,
-  incidentStorage?: IncidentStorage
+  incidentStorage?: IncidentStorage,
+  platform?: PlatformServices
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath);
   const stateBrokerPaths = resolvePaths(basePath, '/observability/state-broker');
@@ -34,6 +41,7 @@ export async function registerObservabilityRoutes(
   const incidentsCreatePaths = resolvePaths(basePath, '/observability/incidents');
   const incidentsHistoryPaths = resolvePaths(basePath, '/observability/incidents/history');
   const incidentsResolvePaths = resolvePaths(basePath, '/observability/incidents/:id/resolve');
+  const insightsChatPaths = resolvePaths(basePath, '/observability/insights/chat');
 
   // GET /api/v1/observability/state-broker
   // Returns statistics from State Broker daemon (cache hits, namespaces, etc.)
@@ -106,14 +114,48 @@ export async function registerObservabilityRoutes(
 
   // GET /api/v1/observability/devkit
   // Returns DevKit health check results (monorepo health score, issues, etc.)
+  // CACHED for 10 minutes via platform.cache to prevent excessive process spawning
   for (const path of devkitPaths) {
     fastify.get(path, async (_request, reply) => {
-      try {
-        fastify.log.debug({ cwd: repoRoot }, 'Executing DevKit health check');
+      const now = Date.now();
 
-        const { stdout, stderr } = await execAsync('npx kb-devkit-health --json', {
+      // Try to get from platform.cache first
+      if (platform?.cache) {
+        try {
+          const cached = await platform.cache.get<{
+            data: unknown;
+            timestamp: number;
+            expiresAt: number;
+          }>(DEVKIT_CACHE_KEY);
+
+          if (cached && now < cached.expiresAt) {
+            const remainingTtl = Math.round((cached.expiresAt - now) / 1000);
+            fastify.log.debug({ remainingTtl }, 'Returning cached DevKit health from platform.cache');
+
+            return {
+              ok: true,
+              data: cached.data,
+              meta: {
+                source: 'devkit-cli',
+                repoRoot,
+                cached: true,
+                cachedAt: cached.timestamp,
+                expiresAt: cached.expiresAt,
+                ttlSeconds: remainingTtl,
+              },
+            };
+          }
+        } catch (cacheError) {
+          fastify.log.warn({ err: cacheError }, 'Failed to read from platform.cache, proceeding without cache');
+        }
+      }
+
+      try {
+        fastify.log.debug({ cwd: repoRoot }, 'Executing DevKit health check (cache miss)');
+
+        const { stdout, stderr } = await execAsync('npx kb-devkit-health --json --quick', {
           cwd: repoRoot,
-          timeout: 30000, // 30s timeout (DevKit can be slow)
+          timeout: 30000, // 30s timeout
           env: {
             ...process.env,
             // Ensure DevKit runs in non-interactive mode
@@ -126,11 +168,25 @@ export async function registerObservabilityRoutes(
         }
 
         const health = JSON.parse(stdout);
+        const expiresAt = now + DEVKIT_CACHE_TTL_MS;
 
-        fastify.log.debug({
-          healthScore: health.healthScore,
-          grade: health.grade,
-        }, 'DevKit health check completed');
+        // Cache the result for 10 minutes via platform.cache
+        if (platform?.cache) {
+          try {
+            await platform.cache.set(DEVKIT_CACHE_KEY, {
+              data: health,
+              timestamp: now,
+              expiresAt,
+            }, DEVKIT_CACHE_TTL_MS);
+            fastify.log.debug({
+              healthScore: health.healthScore,
+              grade: health.grade,
+              cachedUntil: new Date(expiresAt).toISOString(),
+            }, 'DevKit health check completed and cached in platform.cache');
+          } catch (cacheError) {
+            fastify.log.warn({ err: cacheError }, 'Failed to write to platform.cache');
+          }
+        }
 
         return {
           ok: true,
@@ -138,30 +194,63 @@ export async function registerObservabilityRoutes(
           meta: {
             source: 'devkit-cli',
             repoRoot,
-            command: 'npx kb-devkit-health --json',
+            cached: false,
+            cachedAt: now,
+            expiresAt,
+            ttlSeconds: DEVKIT_CACHE_TTL_MS / 1000,
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to execute DevKit health check');
-
-        // Try to parse stdout if available (DevKit might fail but still output JSON)
-        let partialData = null;
+        // DevKit returns exit code 1 when there are critical issues,
+        // but stdout still contains valid JSON - treat this as success
         if (error && typeof error === 'object' && 'stdout' in error) {
           try {
-            partialData = JSON.parse((error as { stdout: string }).stdout);
+            const health = JSON.parse((error as { stdout: string }).stdout);
+            const expiresAt = now + DEVKIT_CACHE_TTL_MS;
+
+            // Cache the result even with exit code 1 (critical issues found)
+            if (platform?.cache) {
+              try {
+                await platform.cache.set(DEVKIT_CACHE_KEY, {
+                  data: health,
+                  timestamp: now,
+                  expiresAt,
+                }, DEVKIT_CACHE_TTL_MS);
+                fastify.log.debug({
+                  healthScore: health.score,
+                  grade: health.grade,
+                  hasCriticalIssues: (health.criticalIssues?.length ?? 0) > 0,
+                }, 'DevKit health check completed (with issues) and cached');
+              } catch (cacheError) {
+                fastify.log.warn({ err: cacheError }, 'Failed to write to platform.cache');
+              }
+            }
+
+            return {
+              ok: true,
+              data: health,
+              meta: {
+                source: 'devkit-cli',
+                repoRoot,
+                cached: false,
+                cachedAt: now,
+                expiresAt,
+                ttlSeconds: DEVKIT_CACHE_TTL_MS / 1000,
+                exitCode: (error as { code?: number }).code ?? 1,
+              },
+            };
           } catch {
-            // Ignore JSON parse errors
+            // JSON parse failed - real error
           }
         }
+
+        fastify.log.error({ err: error }, 'Failed to execute DevKit health check');
 
         return reply.code(500).send({
           ok: false,
           error: {
             code: 'DEVKIT_ERROR',
             message: error instanceof Error ? error.message : 'Failed to execute DevKit health check',
-            details: {
-              partialData,
-            },
           },
         });
       }
@@ -568,6 +657,208 @@ export async function registerObservabilityRoutes(
           error: {
             code: 'INCIDENT_RESOLVE_ERROR',
             message: error instanceof Error ? error.message : 'Failed to resolve incident',
+          },
+        });
+      }
+    });
+  }
+
+  // POST /api/v1/observability/insights/chat
+  // AI-powered insights chat using LLM with system metrics as context
+  for (const path of insightsChatPaths) {
+    fastify.post(path, {
+      schema: {
+        body: {
+          type: 'object',
+          properties: {
+            question: { type: 'string', minLength: 1 },
+            context: {
+              type: 'object',
+              properties: {
+                includeMetrics: { type: 'boolean' },
+                includeIncidents: { type: 'boolean' },
+                includeHistory: { type: 'boolean' },
+                timeRange: { type: 'string', enum: ['1h', '6h', '24h', '7d'] },
+                plugins: { type: 'array', items: { type: 'string' } },
+              },
+            },
+          },
+          required: ['question'],
+        },
+      },
+    }, async (request, reply) => {
+      if (!platform?.llm) {
+        return reply.code(503).send({
+          ok: false,
+          error: {
+            code: 'LLM_UNAVAILABLE',
+            message: 'LLM adapter is not configured. AI Insights requires an LLM adapter.',
+          },
+        });
+      }
+
+      try {
+        const body = request.body as {
+          question: string;
+          context?: {
+            includeMetrics?: boolean;
+            includeIncidents?: boolean;
+            includeHistory?: boolean;
+            timeRange?: '1h' | '6h' | '24h' | '7d';
+            plugins?: string[];
+          };
+        };
+
+        const contextConfig = {
+          includeMetrics: body.context?.includeMetrics ?? true,
+          includeIncidents: body.context?.includeIncidents ?? true,
+          includeHistory: body.context?.includeHistory ?? true,
+          timeRange: body.context?.timeRange ?? '24h',
+          plugins: body.context?.plugins ?? [],
+        };
+
+        // Build context from real data
+        let contextText = '';
+
+        // Fetch current metrics
+        if (contextConfig.includeMetrics) {
+          try {
+            const metricsUrl = process.env.KB_REST_API_URL || 'http://localhost:5050';
+            // Note: basePath is /api/v1 by default
+            const metricsResponse = await fetch(`${metricsUrl}/api/v1/metrics/json`, {
+              signal: AbortSignal.timeout(5000),
+            });
+
+            if (metricsResponse.ok) {
+              const response = await metricsResponse.json();
+              // API returns { ok: true, data: {...} } wrapper
+              const metrics = response.data ?? response;
+
+              const errorRate = metrics.requests?.total
+                ? (((metrics.requests.clientErrors ?? 0) + (metrics.requests.serverErrors ?? 0)) / metrics.requests.total * 100)
+                : 0;
+
+              contextText += `\n## Current System Metrics\n`;
+              contextText += `- Total requests: ${metrics.requests?.total ?? 0}\n`;
+              contextText += `- Error rate: ${errorRate.toFixed(2)}%\n`;
+              contextText += `- P50 latency: ${metrics.latency?.p50?.toFixed(0) ?? 'N/A'}ms\n`;
+              contextText += `- P95 latency: ${metrics.latency?.p95?.toFixed(0) ?? 'N/A'}ms\n`;
+              contextText += `- P99 latency: ${metrics.latency?.p99?.toFixed(0) ?? 'N/A'}ms\n`;
+
+              // Per-plugin metrics
+              if (metrics.perPlugin?.length > 0) {
+                contextText += `\n### Per-Plugin Metrics\n`;
+                const pluginsToShow = contextConfig.plugins.length > 0
+                  ? metrics.perPlugin.filter((p: any) => contextConfig.plugins.includes(p.pluginId))
+                  : metrics.perPlugin.slice(0, 10);
+
+                for (const plugin of pluginsToShow) {
+                  const pluginErrorRate = plugin.requests
+                    ? ((plugin.errors ?? 0) / plugin.requests * 100).toFixed(2)
+                    : '0.00';
+                  contextText += `- ${plugin.pluginId}: ${plugin.requests ?? 0} requests, ${pluginErrorRate}% errors, ${plugin.latency?.average?.toFixed(0) ?? 'N/A'}ms avg latency\n`;
+                }
+              }
+            }
+          } catch (metricsError) {
+            fastify.log.warn({ err: metricsError }, 'Failed to fetch metrics for insights context');
+          }
+        }
+
+        // Fetch recent incidents
+        if (contextConfig.includeIncidents && incidentStorage) {
+          try {
+            const incidents = await incidentStorage.queryIncidents({ limit: 10 });
+            if (incidents.length > 0) {
+              contextText += `\n## Recent Incidents (${incidents.length})\n`;
+              for (const incident of incidents) {
+                contextText += `- [${incident.severity.toUpperCase()}] ${incident.title}\n`;
+                if (incident.details) {
+                  contextText += `  Details: ${incident.details.slice(0, 100)}${incident.details.length > 100 ? '...' : ''}\n`;
+                }
+              }
+            }
+          } catch (incidentError) {
+            fastify.log.warn({ err: incidentError }, 'Failed to fetch incidents for insights context');
+          }
+        }
+
+        // Build prompt
+        const prompt = `You are an AI assistant analyzing a software platform's observability data.
+
+${contextText}
+
+User Question: ${body.question}
+
+Provide a clear, actionable response based on the data above. Include:
+1. Direct answer to the question
+2. Supporting evidence from the metrics/incidents
+3. Recommendations if applicable
+
+Be concise but thorough. Use markdown formatting.`;
+
+        fastify.log.debug({ question: body.question, contextLength: contextText.length }, 'Calling LLM for insights');
+
+        const result = await platform.llm.complete(prompt, {
+          systemPrompt: 'You are a DevOps and SRE expert assistant. Analyze system metrics and provide actionable insights. Be concise, technical, and helpful.',
+          temperature: 0.7,
+          maxTokens: 1000,
+        });
+
+        const totalTokens = result.usage.promptTokens + result.usage.completionTokens;
+
+        fastify.log.debug({ tokensUsed: totalTokens }, 'LLM response received for insights');
+
+        // Track analytics
+        if (platform.analytics) {
+          platform.analytics.track('ai_insights.chat', {
+            questionLength: body.question.length,
+            contextIncluded: Object.keys(contextConfig).filter(k => (contextConfig as any)[k]),
+            timeRange: contextConfig.timeRange,
+            pluginsFiltered: contextConfig.plugins.length,
+            promptTokens: result.usage.promptTokens,
+            completionTokens: result.usage.completionTokens,
+            totalTokens,
+            model: result.model,
+          }).catch(() => {
+            // Silently ignore analytics errors
+          });
+        }
+
+        return {
+          ok: true,
+          data: {
+            answer: result.content.trim(),
+            context: Object.keys(contextConfig).filter(k => (contextConfig as any)[k]),
+            usage: {
+              promptTokens: result.usage.promptTokens,
+              completionTokens: result.usage.completionTokens,
+              totalTokens,
+            },
+          },
+          meta: {
+            source: 'llm-insights',
+            model: result.model,
+          },
+        };
+      } catch (error) {
+        fastify.log.error({ err: error }, 'Failed to generate insights');
+
+        // Track error analytics
+        if (platform?.analytics) {
+          platform.analytics.track('ai_insights.error', {
+            error: error instanceof Error ? error.message : 'Unknown error',
+            questionLength: (request.body as any)?.question?.length ?? 0,
+          }).catch(() => {
+            // Silently ignore analytics errors
+          });
+        }
+
+        return reply.code(500).send({
+          ok: false,
+          error: {
+            code: 'INSIGHTS_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to generate insights',
           },
         });
       }

@@ -27,6 +27,7 @@ import { metricsCollector } from '../middleware/metrics';
 import { getPlatformServices } from '../platform';
 import { HistoricalMetricsCollector } from '../services/historical-metrics';
 import { IncidentStorage } from '../services/incident-storage';
+import { IncidentDetector } from '../services/incident-detector';
 
 function normalizeBasePath(basePath?: string): string {
   if (!basePath || basePath === '/') {
@@ -284,7 +285,38 @@ export async function registerRoutes(
   );
   server.log.info('Incident storage initialized');
 
-  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, incidentStorage);
+  // Initialize incident detector for auto-detection
+  const incidentDetector = new IncidentDetector(
+    incidentStorage,
+    {
+      intervalMs: 30000, // Check every 30 seconds
+      cooldownMs: 5 * 60 * 1000, // 5 minute cooldown between same incidents
+      debug: process.env.NODE_ENV !== 'production',
+      thresholds: {
+        errorRateWarning: 5,
+        errorRateCritical: 10,
+        latencyP99Warning: 2000,
+        latencyP99Critical: 5000,
+        latencyP95Warning: 1000,
+        minRequestsForDetection: 10,
+        pluginErrorRateWarning: 10,
+        pluginErrorRateCritical: 25,
+      },
+    },
+    server.log
+  );
+
+  // Start incident detector
+  incidentDetector.start();
+  server.log.info('Incident detector started');
+
+  // Stop detector on server close
+  server.addHook('onClose', async () => {
+    incidentDetector.stop();
+    server.log.info('Incident detector stopped');
+  });
+
+  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, incidentStorage, platform);
 
   await registerAnalyticsRoutes(server, config);
 

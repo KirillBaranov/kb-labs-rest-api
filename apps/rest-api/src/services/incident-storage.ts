@@ -22,6 +22,18 @@ export type IncidentType =
   | 'custom';
 
 /**
+ * Root cause analysis item
+ */
+export interface RootCauseItem {
+  /** Factor contributing to the incident */
+  factor: string;
+  /** Confidence level (0.0 - 1.0) */
+  confidence: number;
+  /** Evidence supporting this root cause */
+  evidence: string;
+}
+
+/**
  * Incident record structure
  */
 export interface Incident {
@@ -35,8 +47,8 @@ export interface Incident {
   title: string;
   /** Detailed description */
   details: string;
-  /** Root cause analysis (optional) */
-  rootCause?: string;
+  /** Root cause analysis (optional) - array of contributing factors */
+  rootCause?: RootCauseItem[];
   /** Affected services/plugins */
   affectedServices?: string[];
   /** Timestamp when incident occurred (Unix ms) */
@@ -50,9 +62,11 @@ export interface Incident {
 }
 
 /**
- * Incident create payload (omit id, we generate it)
+ * Incident create payload (omit id, timestamp is optional - will be set to now if not provided)
  */
-export type IncidentCreatePayload = Omit<Incident, 'id'>;
+export type IncidentCreatePayload = Omit<Incident, 'id' | 'timestamp'> & {
+  timestamp?: number;
+};
 
 /**
  * Incident query options
