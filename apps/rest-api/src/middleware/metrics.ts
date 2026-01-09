@@ -9,6 +9,7 @@ import {
   tenantErrorsTotal,
   tenantRequestDuration,
 } from './prom-metrics';
+import { getPlatformServices } from '../platform';
 
 /**
  * @module @kb-labs/rest-api-app/middleware/metrics
@@ -674,6 +675,28 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     // Record tenant metrics
     tenantRequestsTotal.inc({ tenant: tenantId });
     tenantRequestDuration.observe({ tenant: tenantId }, duration);
+
+    // Track to analytics for long-term storage (async, fire-and-forget)
+    // This enables quarterly/annual reports and endpoint usage analysis
+    // Skip OPTIONS (CORS preflight) - they don't carry useful information
+    if (method !== 'OPTIONS') {
+      const { analytics } = getPlatformServices();
+      if (analytics) {
+        analytics.track('api.request', {
+          endpoint: normalizedRoute,
+          method,
+          statusCode: reply.statusCode,
+          durationMs: Math.round(duration),
+          tenantId,
+          pluginId: (request as any).kbPluginId ?? undefined,
+          clientVersion: request.headers['x-client-version'] as string | undefined,
+          userAgent: request.headers['user-agent'] as string | undefined,
+          requestId: request.id as string | undefined,
+        }).catch(() => {
+          // Silently ignore analytics errors - should not affect request handling
+        });
+      }
+    }
 
     done();
   });
