@@ -54,7 +54,9 @@ export async function loadRestApiConfig(
       bodyLimit: 10_485_760,
     },
     rateLimit: {
-      max: 60,
+      // 600/min for dev (dashboard needs ~10 requests per page load)
+      // Override with KB_REST_RATE_LIMIT_MAX=60 for production public API
+      max: 600,
       timeWindow: '1 minute',
     },
     plugins: [],
@@ -117,7 +119,7 @@ export async function loadRestApiConfig(
       const parsedMax = Number.parseInt(env.KB_REST_RATE_LIMIT_MAX, 10);
       if (!Number.isNaN(parsedMax)) {
         overrides.rateLimit = {
-          ...(overrides.rateLimit ?? defaults.rateLimit ?? { max: 60, timeWindow: '1 minute' }),
+          ...(overrides.rateLimit ?? defaults.rateLimit ?? { max: 600, timeWindow: '1 minute' }),
           max: parsedMax,
         };
       }
@@ -125,7 +127,7 @@ export async function loadRestApiConfig(
 
     if (env.KB_REST_RATE_LIMIT_WINDOW) {
       overrides.rateLimit = {
-        ...(overrides.rateLimit ?? defaults.rateLimit ?? { max: 60, timeWindow: '1 minute' }),
+        ...(overrides.rateLimit ?? defaults.rateLimit ?? { max: 600, timeWindow: '1 minute' }),
         timeWindow: env.KB_REST_RATE_LIMIT_WINDOW,
       };
     }
