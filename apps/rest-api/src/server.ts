@@ -52,8 +52,16 @@ export async function createServer(
     }
   }
 
+  // Use platform logger directly (PinoLoggerAdapter wraps Pino)
+  // Cast to any because Fastify expects Pino instance, but our ILogger is compatible
+  const restLogger = platform.logger.child({
+    layer: 'rest',
+    service: 'server',
+    traceId: randomUUID(),
+  });
+
   const server = Fastify({
-    logger: true, // Enable logger so disableRequestLogging works
+    logger: restLogger as any, // Use our platform logger directly
     requestIdHeader: 'X-Request-Id',
     requestIdLogLabel: 'requestId',
     disableRequestLogging: true,
@@ -79,10 +87,6 @@ export async function createServer(
     return customLogger as any;
   });
 
-  // Override with our custom logger for non-request logging
-  const restLogger = createRestServerLogger();
-  server.log = restLogger as unknown as typeof server.log;
-
   // Log protocol being used
   if (useHttp2 && httpsOptions) {
     restLogger.info('HTTP/2 enabled with HTTPS', {
@@ -107,37 +111,5 @@ export async function createServer(
   await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, cliApi);
 
   return server as unknown as FastifyInstance;
-}
-
-function createRestServerLogger() {
-  const traceId = randomUUID();
-  const logger = platform.logger.child({
-    layer: 'rest',
-    service: 'server',
-    traceId,
-  });
-
-  // Return Fastify-compatible logger interface
-  return {
-    debug: (msg: string, fields?: Record<string, unknown>) => logger.debug(msg || '', fields),
-    info: (msg: string, fields?: Record<string, unknown>) => logger.info(msg || '', fields),
-    warn: (msg: string, fields?: Record<string, unknown>) => logger.warn(msg || '', fields),
-    error: (msg: string, fields?: Record<string, unknown> | Error) => {
-      if (fields instanceof Error) {
-        logger.error(msg || '', fields, {});
-      } else {
-        logger.error(msg || '', undefined, fields);
-      }
-    },
-    fatal: (msg: string, fields?: Record<string, unknown> | Error) => {
-      if (fields instanceof Error) {
-        logger.error(msg || '', fields, {});
-      } else {
-        logger.error(msg || '', undefined, fields);
-      }
-    },
-    trace: (msg: string, fields?: Record<string, unknown>) => logger.trace(msg || '', fields),
-    child: () => createRestServerLogger(),
-  };
 }
 
