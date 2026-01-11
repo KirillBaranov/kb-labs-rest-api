@@ -9,12 +9,16 @@ import { findRepoRoot } from '@kb-labs/core-sys';
 import { createCliAPI, type CliAPI } from '@kb-labs/cli-api';
 import { initializePlatform } from './platform';
 import { platform } from '@kb-labs/core-runtime';
+import { SystemMetricsCollector } from './services/system-metrics-collector';
 import * as path from 'node:path';
 import { promises as fs, readFileSync, existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 // Singleton CLI API instance for cleanup
 let cliApiInstance: CliAPI | null = null;
+
+// System metrics collector instance for cleanup
+let metricsCollector: SystemMetricsCollector | null = null;
 
 /**
  * Find monorepo root (prefer pnpm-workspace.yaml with kb-* patterns)
@@ -273,6 +277,11 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   // before returning, so routes are already mounted when createServer() returns
   const server = await createServer(config, repoRoot, cliApi);
 
+  // Start system metrics collector
+  bootstrapLogger.info('Starting system metrics collector');
+  metricsCollector = new SystemMetricsCollector();
+  await metricsCollector.start(10000, 60000); // Collect every 10s, TTL 60s
+
   // Start server
   const address = await server.listen({
     port: config.port,
@@ -284,6 +293,12 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   // Setup graceful shutdown
   const shutdown = async (signal: string) => {
     bootstrapLogger.warn('Received shutdown signal', { signal });
+
+    // Stop metrics collector
+    if (metricsCollector) {
+      metricsCollector.stop();
+      metricsCollector = null;
+    }
 
     // Dispose CLI API
     if (cliApiInstance) {
