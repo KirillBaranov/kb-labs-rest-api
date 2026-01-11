@@ -3,8 +3,10 @@
  * Automatic incident detection based on metrics thresholds
  */
 
-import type { IncidentStorage, IncidentCreatePayload, IncidentSeverity, IncidentType, RootCauseItem } from './incident-storage';
+import type { IncidentStorage, IncidentCreatePayload, IncidentSeverity, IncidentType, RelatedData } from './incident-storage';
 import { metricsCollector } from '../middleware/metrics';
+import { platform } from '@kb-labs/core-runtime';
+import type { LogLevel } from '@kb-labs/core-platform';
 
 /**
  * Detection thresholds configuration
@@ -83,6 +85,14 @@ export class IncidentDetector {
   private recentIncidents: RecentIncident[] = [];
   private isRunning = false;
 
+  // Metrics history for "before" comparison (last 10 snapshots)
+  private metricsHistory: Array<{
+    timestamp: number;
+    errorRate: number;
+    avgLatency: number;
+    totalRequests: number;
+  }> = [];
+
   constructor(
     incidentStorage: IncidentStorage,
     config: Partial<IncidentDetectorConfig> = {},
@@ -143,6 +153,24 @@ export class IncidentDetector {
   async runDetection(): Promise<void> {
     const metrics = metricsCollector.getMetrics();
     const now = Date.now();
+
+    // Save current metrics to history (for "before" comparison)
+    const totalErrors = (metrics.requests.clientErrors ?? 0) + (metrics.requests.serverErrors ?? 0);
+    const errorRate = metrics.requests.total > 0
+      ? (totalErrors / metrics.requests.total) * 100
+      : 0;
+
+    this.metricsHistory.push({
+      timestamp: now,
+      errorRate,
+      avgLatency: metrics.latency.average ?? 0,
+      totalRequests: metrics.requests.total,
+    });
+
+    // Keep only last 10 snapshots (5 minutes history if running every 30s)
+    if (this.metricsHistory.length > 10) {
+      this.metricsHistory.shift();
+    }
 
     // Clean up old recent incidents (outside cooldown period)
     this.recentIncidents = this.recentIncidents.filter(
@@ -205,33 +233,11 @@ export class IncidentDetector {
     }
 
     if (severity) {
-      // Determine primary error type for root cause
-      const clientErrors = metrics.requests.clientErrors ?? 0;
-      const serverErrors = metrics.requests.serverErrors ?? 0;
-      const primaryErrorType = serverErrors > clientErrors ? 'Server errors (5xx)' : 'Client errors (4xx)';
-
       await this.createIncident({
         type: 'error_rate',
         severity,
         title,
         details,
-        rootCause: [
-          {
-            factor: primaryErrorType,
-            confidence: 0.85,
-            evidence: `${serverErrors} server errors, ${clientErrors} client errors out of ${metrics.requests.total} requests`,
-          },
-          {
-            factor: 'Application bugs or misconfigurations',
-            confidence: 0.7,
-            evidence: 'Check application logs for stack traces',
-          },
-          {
-            factor: 'Infrastructure issues',
-            confidence: 0.5,
-            evidence: 'Verify database connections, external services, and resource limits',
-          },
-        ],
         metadata: {
           errorRate,
           totalRequests: metrics.requests.total,
@@ -294,23 +300,6 @@ export class IncidentDetector {
           severity,
           title,
           details,
-          rootCause: [
-            {
-              factor: 'High tail latency',
-              confidence: 0.9,
-              evidence: `P99 latency ${p99.toFixed(0)}ms exceeds threshold`,
-            },
-            {
-              factor: 'Possible slow database queries',
-              confidence: 0.6,
-              evidence: 'Common cause of high P99 latency',
-            },
-            {
-              factor: 'External API delays',
-              confidence: 0.5,
-              evidence: 'Check external service response times',
-            },
-          ],
           metadata: {
             p99,
             p95,
@@ -387,23 +376,6 @@ export class IncidentDetector {
           title,
           details,
           affectedServices: [plugin.pluginId],
-          rootCause: [
-            {
-              factor: `Plugin ${plugin.pluginId} failures`,
-              confidence: 0.95,
-              evidence: `Error rate ${errorRate.toFixed(1)}% (${plugin.errors ?? 0}/${plugin.requests} requests)`,
-            },
-            {
-              factor: 'Plugin configuration issue',
-              confidence: 0.6,
-              evidence: 'Check plugin settings and dependencies',
-            },
-            {
-              factor: 'External dependency failure',
-              confidence: 0.4,
-              evidence: 'Verify external services the plugin depends on',
-            },
-          ],
           metadata: {
             pluginId: plugin.pluginId,
             errorRate,
@@ -424,6 +396,203 @@ export class IncidentDetector {
   }
 
   /**
+   * Gather related data (logs, metrics, timeline) for incident
+   * @private
+   */
+  private async gatherRelatedData(
+    incidentType: IncidentType,
+    timeWindow: number = 5 * 60 * 1000 // 5 minutes default
+  ): Promise<RelatedData> {
+    const now = Date.now();
+    const from = now - timeWindow;
+
+    const relatedData: RelatedData = {
+      timeline: [],
+    };
+
+    try {
+      // Gather error and fatal logs from time window
+      const [errorLogsResult, fatalLogsResult] = await Promise.all([
+        platform.logs.query({ level: 'error' as LogLevel, from, to: now }, { limit: 50 }),
+        platform.logs.query({ level: 'fatal' as LogLevel, from, to: now }, { limit: 50 }),
+      ]);
+
+      const allErrorLogs = [...errorLogsResult.logs, ...fatalLogsResult.logs];
+
+      if (allErrorLogs.length > 0) {
+        // Sort by timestamp descending
+        allErrorLogs.sort((a, b) => b.timestamp - a.timestamp);
+
+        // Extract sample error messages with stack traces (top 5 unique)
+        const uniqueErrors = new Set<string>();
+        const endpointErrorCount = new Map<string, { count: number; sample: string }>();
+
+        for (const log of allErrorLogs) {
+          // Extract error message with stack trace if available
+          let errorMsg = typeof log.message === 'string' ? log.message : JSON.stringify(log.message);
+
+          // Add structured error info if available
+          if ((log as any).err) {
+            const err = (log as any).err;
+            const stack = err.stack ? `\n${err.stack.split('\n').slice(0, 3).join('\n')}` : '';
+            errorMsg = `${err.message || errorMsg}${stack}`;
+
+            // Add plugin/command context if available
+            if ((log as any).plugin) {
+              errorMsg = `[${(log as any).plugin}] ${errorMsg}`;
+            }
+            if ((log as any).command) {
+              errorMsg += `\nCommand: ${(log as any).command}`;
+            }
+          }
+
+          if (errorMsg && uniqueErrors.size < 5) {
+            uniqueErrors.add(errorMsg.substring(0, 500)); // Increased limit for stack traces
+          }
+
+          // Group errors by endpoint (if available in log metadata)
+          const endpoint = (log as any).endpoint || (log as any).url || 'unknown';
+          const existing = endpointErrorCount.get(endpoint);
+          if (existing) {
+            existing.count++;
+          } else {
+            endpointErrorCount.set(endpoint, {
+              count: 1,
+              sample: errorMsg.substring(0, 200)
+            });
+          }
+        }
+
+        // Get top 5 endpoints with most errors
+        const topEndpoints = Array.from(endpointErrorCount.entries())
+          .sort((a, b) => b[1].count - a[1].count)
+          .slice(0, 5)
+          .map(([endpoint, data]) => ({
+            endpoint,
+            count: data.count,
+            sample: data.sample,
+          }));
+
+        relatedData.logs = {
+          errorCount: allErrorLogs.filter(l => l.level === 'error').length,
+          warnCount: 0, // Could query warnings separately if needed
+          timeRange: [from, now],
+          sampleErrors: Array.from(uniqueErrors),
+          topEndpoints: topEndpoints.length > 0 ? topEndpoints : undefined,
+        };
+
+        // Add error logs to timeline (top 10 most recent)
+        for (const log of allErrorLogs.slice(0, 10)) {
+          const msg = typeof log.message === 'string' ? log.message : 'Error occurred';
+          const plugin = (log as any).plugin ? `[${(log as any).plugin}] ` : '';
+          relatedData.timeline!.push({
+            timestamp: log.timestamp,
+            event: `${plugin}${msg.substring(0, 100)}`,
+            source: 'logs',
+          });
+        }
+      }
+    } catch (error) {
+      this.log('warn', 'Failed to gather related logs', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Add current metrics snapshot (during)
+    const currentMetrics = metricsCollector.getMetrics();
+    const duringMetrics = {
+      errorRate: currentMetrics.requests.total > 0
+        ? ((currentMetrics.requests.clientErrors + currentMetrics.requests.serverErrors) / currentMetrics.requests.total) * 100
+        : 0,
+      avgLatency: currentMetrics.latency.average ?? 0,
+      totalRequests: currentMetrics.requests.total,
+      totalErrors: currentMetrics.requests.clientErrors + currentMetrics.requests.serverErrors,
+    };
+
+    // Calculate "before" metrics from history (average of last 5 snapshots before incident)
+    let beforeMetrics: Record<string, number> | undefined;
+    if (this.metricsHistory.length >= 2) {
+      // Use snapshots before the current one (exclude last snapshot which might be spike)
+      const beforeSnapshots = this.metricsHistory.slice(0, -1);
+
+      if (beforeSnapshots.length > 0) {
+        const avgErrorRate = beforeSnapshots.reduce((sum, s) => sum + s.errorRate, 0) / beforeSnapshots.length;
+        const avgLatency = beforeSnapshots.reduce((sum, s) => sum + s.avgLatency, 0) / beforeSnapshots.length;
+        const avgRequests = beforeSnapshots.reduce((sum, s) => sum + s.totalRequests, 0) / beforeSnapshots.length;
+
+        beforeMetrics = {
+          errorRate: avgErrorRate,
+          avgLatency,
+          totalRequests: avgRequests,
+        };
+
+        this.log('debug', 'Calculated before metrics', {
+          before: beforeMetrics,
+          during: duringMetrics,
+          snapshotsUsed: beforeSnapshots.length,
+        });
+      }
+    }
+
+    // Collect top slowest requests from metrics histogram (for latency incidents)
+    let topSlowest: Array<{ endpoint: string; method: string; durationMs: number; statusCode?: number }> | undefined;
+    let affectedEndpoints: string[] | undefined;
+
+    if (incidentType === 'latency_spike') {
+      const histogram = currentMetrics.latency.histogram;
+
+      if (histogram && histogram.length > 0) {
+        // Sort by max latency descending (slowest first)
+        const slowestRoutes = histogram
+          .filter(h => h.max > 100) // Only include requests >100ms
+          .sort((a, b) => b.max - a.max)
+          .slice(0, 10); // Top 10 slowest
+
+        topSlowest = slowestRoutes.map(h => {
+          const [method, ...pathParts] = h.route.split(' ');
+          const endpoint = pathParts.join(' ');
+          // Get most common status code
+          const statusCodes = Object.keys(h.byStatus);
+          const mostCommonStatus = statusCodes.length > 0 ? parseInt(statusCodes[0], 10) : undefined;
+
+          return {
+            endpoint,
+            method: method || 'GET',
+            durationMs: Math.round(h.max),
+            statusCode: mostCommonStatus,
+          };
+        });
+
+        affectedEndpoints = [...new Set(slowestRoutes.map(h => h.route))];
+
+        this.log('debug', 'Collected slow requests for latency incident', {
+          topSlowestCount: topSlowest.length,
+          affectedEndpointsCount: affectedEndpoints.length,
+        });
+      }
+    }
+
+    relatedData.metrics = {
+      before: beforeMetrics,
+      during: duringMetrics,
+      topSlowest,
+      affectedEndpoints,
+    };
+
+    // Add detection event to timeline
+    relatedData.timeline!.unshift({
+      timestamp: now,
+      event: `Incident detected: ${incidentType}`,
+      source: 'detector',
+    });
+
+    // Sort timeline by timestamp descending (newest first)
+    relatedData.timeline!.sort((a, b) => b.timestamp - a.timestamp);
+
+    return relatedData;
+  }
+
+  /**
    * Create incident and track it
    */
   private async createIncident(
@@ -432,7 +601,16 @@ export class IncidentDetector {
     timestamp: number
   ): Promise<void> {
     try {
-      const incident = await this.incidentStorage.createIncident(payload);
+      // Gather related data (logs, metrics, timeline)
+      const relatedData = await this.gatherRelatedData(payload.type);
+
+      // Merge with existing payload
+      const enrichedPayload: IncidentCreatePayload = {
+        ...payload,
+        relatedData,
+      };
+
+      const incident = await this.incidentStorage.createIncident(enrichedPayload);
 
       // Track for deduplication
       this.recentIncidents.push({
@@ -441,12 +619,30 @@ export class IncidentDetector {
         timestamp,
       });
 
-      this.log('info', 'Auto-created incident', {
+      this.log('info', 'Auto-created incident with context', {
         id: incident.id,
         type: incident.type,
         severity: incident.severity,
         title: incident.title,
+        errorLogsCount: relatedData.logs?.errorCount ?? 0,
+        timelineEventsCount: relatedData.timeline?.length ?? 0,
       });
+
+      // Track analytics event
+      if (platform.analytics) {
+        platform.analytics.track('incident.created', {
+          incidentId: incident.id,
+          type: incident.type,
+          severity: incident.severity,
+          source: 'auto-detector',
+          errorLogsCount: relatedData.logs?.errorCount ?? 0,
+          timelineEventsCount: relatedData.timeline?.length ?? 0,
+          hasBeforeMetrics: !!relatedData.metrics?.before,
+          affectedServicesCount: payload.affectedServices?.length ?? 0,
+        }).catch(() => {
+          // Silently ignore analytics errors
+        });
+      }
     } catch (error) {
       this.log('error', 'Failed to create incident', {
         key,

@@ -1,9 +1,10 @@
 /**
  * @module @kb-labs/rest-api-app/services/incident-storage
- * Incident history storage service
+ * Incident history storage service (SQLite-backed)
  */
 
-import type { CacheAdapter } from '@kb-labs/plugin-contracts';
+import type { ISQLDatabase } from '@kb-labs/core-platform/adapters';
+import { platform } from '@kb-labs/core-runtime';
 
 /**
  * Incident severity levels
@@ -34,6 +35,78 @@ export interface RootCauseItem {
 }
 
 /**
+ * Related logs context
+ */
+export interface RelatedLogsData {
+  /** Number of error logs in timeframe */
+  errorCount: number;
+  /** Number of warning logs in timeframe */
+  warnCount: number;
+  /** Time range [from, to] in Unix ms */
+  timeRange: [number, number];
+  /** Sample error messages (top 5) */
+  sampleErrors: string[];
+  /** Top endpoints with errors (NEW) */
+  topEndpoints?: Array<{
+    endpoint: string;
+    count: number;
+    sample: string;
+  }>;
+}
+
+/**
+ * Slow request details (NEW)
+ */
+export interface SlowRequest {
+  /** Request endpoint */
+  endpoint: string;
+  /** HTTP method */
+  method: string;
+  /** Request duration in milliseconds */
+  durationMs: number;
+  /** HTTP status code */
+  statusCode?: number;
+}
+
+/**
+ * Related metrics context
+ */
+export interface RelatedMetricsData {
+  /** Metrics before incident */
+  before?: Record<string, number>;
+  /** Metrics during incident */
+  during?: Record<string, number>;
+  /** Top slowest requests (NEW - for latency incidents) */
+  topSlowest?: SlowRequest[];
+  /** Affected endpoints (NEW - which endpoints were slow) */
+  affectedEndpoints?: string[];
+}
+
+/**
+ * Timeline event
+ */
+export interface TimelineEvent {
+  /** Event timestamp (Unix ms) */
+  timestamp: number;
+  /** Event description */
+  event: string;
+  /** Source of event */
+  source: 'detector' | 'logs' | 'metrics' | 'manual';
+}
+
+/**
+ * Related data gathered during incident
+ */
+export interface RelatedData {
+  /** Related logs information */
+  logs?: RelatedLogsData;
+  /** Related metrics information */
+  metrics?: RelatedMetricsData;
+  /** Timeline of events */
+  timeline?: TimelineEvent[];
+}
+
+/**
  * Incident record structure
  */
 export interface Incident {
@@ -57,8 +130,14 @@ export interface Incident {
   resolvedAt?: number;
   /** Resolution notes */
   resolutionNotes?: string;
-  /** Related metrics/logs */
+  /** Related metrics/logs (legacy field from detector) */
   metadata?: Record<string, unknown>;
+  /** NEW: Related data (logs, metrics, timeline) */
+  relatedData?: RelatedData;
+  /** NEW: AI analysis results (set after analysis) */
+  aiAnalysis?: any; // Will be typed in analyzer module
+  /** NEW: When AI analysis was performed */
+  aiAnalyzedAt?: number;
 }
 
 /**
@@ -99,25 +178,47 @@ export interface IncidentStorageConfig {
 }
 
 const DEFAULT_CONFIG: Required<IncidentStorageConfig> = {
-  ttlMs: 30 * 24 * 60 * 60 * 1000, // 30 days
-  maxIncidents: 1000,
+  ttlMs: 30 * 24 * 60 * 60 * 1000, // 30 days (not used with SQLite, kept for compatibility)
+  maxIncidents: 1000, // Not enforced with SQLite, use retention policy instead
   debug: false,
 };
 
 /**
+ * Database row structure (matches SQL schema)
+ */
+interface IncidentRow {
+  id: string;
+  type: string;
+  severity: string;
+  title: string;
+  details: string;
+  timestamp: number;
+  resolved_at: number | null;
+  created_at: number;
+  resolution_notes: string | null;
+  affected_services: string | null; // JSON
+  metadata: string | null; // JSON
+  related_logs_count: number;
+  related_logs_sample: string | null; // JSON
+  related_metrics: string | null; // JSON
+  timeline: string | null; // JSON
+  ai_analysis: string | null; // JSON
+  ai_analyzed_at: number | null;
+}
+
+/**
  * Incident storage service
  *
- * Stores incident history in platform.cache with TTL-based retention.
- * Provides CRUD operations and query filtering.
+ * Stores incident history in SQLite database for persistence.
+ * Provides CRUD operations, query filtering, and full-text search.
  */
 export class IncidentStorage {
-  private cache: CacheAdapter;
+  private db: ISQLDatabase;
   private config: Required<IncidentStorageConfig>;
   private logger: Console | any;
-  private readonly CACHE_KEY = 'incidents:history';
 
-  constructor(cache: CacheAdapter, config: IncidentStorageConfig = {}, logger: Console | any = console) {
-    this.cache = cache;
+  constructor(db: ISQLDatabase, config: IncidentStorageConfig = {}, logger: Console | any = console) {
+    this.db = db;
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.logger = logger;
   }
@@ -128,47 +229,81 @@ export class IncidentStorage {
   async createIncident(payload: IncidentCreatePayload): Promise<Incident> {
     // Generate unique ID
     const id = `inc-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-
-    const incident: Incident = {
-      id,
-      ...payload,
-      timestamp: payload.timestamp ?? Date.now(),
-    };
+    const timestamp = payload.timestamp ?? Date.now();
 
     // Validate required fields
-    if (!incident.type || !incident.severity || !incident.title) {
+    if (!payload.type || !payload.severity || !payload.title) {
       throw new Error('Incident must have type, severity, and title');
     }
 
-    // Get existing incidents
-    let incidents = await this.getAllIncidents();
+    // Extract related data for denormalized storage
+    const relatedLogsCount = payload.relatedData?.logs?.errorCount ?? 0;
+    // Store entire logs structure (includes sampleErrors, topEndpoints, etc.)
+    const relatedLogsSample = payload.relatedData?.logs
+      ? JSON.stringify(payload.relatedData.logs)
+      : null;
+    const relatedMetrics = payload.relatedData?.metrics
+      ? JSON.stringify(payload.relatedData.metrics)
+      : null;
+    const timeline = payload.relatedData?.timeline
+      ? JSON.stringify(payload.relatedData.timeline)
+      : null;
 
-    // Add new incident
-    incidents.unshift(incident); // newest first
-
-    // Trim to max limit
-    if (incidents.length > this.config.maxIncidents) {
-      incidents = incidents.slice(0, this.config.maxIncidents);
-    }
-
-    // Store back with TTL
-    await this.cache.set(this.CACHE_KEY, incidents, this.config.ttlMs);
+    // Insert into database
+    await this.db.query(
+      `INSERT INTO incidents (
+        id, type, severity, title, details, timestamp,
+        resolved_at, resolution_notes,
+        affected_services, metadata,
+        related_logs_count, related_logs_sample, related_metrics, timeline
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        payload.type,
+        payload.severity,
+        payload.title,
+        payload.details,
+        timestamp,
+        payload.resolvedAt ?? null,
+        payload.resolutionNotes ?? null,
+        payload.affectedServices ? JSON.stringify(payload.affectedServices) : null,
+        payload.metadata ? JSON.stringify(payload.metadata) : null,
+        relatedLogsCount,
+        relatedLogsSample,
+        relatedMetrics,
+        timeline,
+      ]
+    );
 
     this.log('info', 'Incident created', {
-      id: incident.id,
-      type: incident.type,
-      severity: incident.severity,
+      id,
+      type: payload.type,
+      severity: payload.severity,
     });
 
-    return incident;
+    // Fetch and return the created incident
+    const created = await this.getIncident(id);
+    if (!created) {
+      throw new Error('Failed to retrieve created incident');
+    }
+
+    return created;
   }
 
   /**
    * Get incident by ID
    */
   async getIncident(id: string): Promise<Incident | null> {
-    const incidents = await this.getAllIncidents();
-    return incidents.find(inc => inc.id === id) ?? null;
+    const result = await this.db.query<IncidentRow>(
+      'SELECT * FROM incidents WHERE id = ?',
+      [id]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    return this.rowToIncident(result.rows[0]!);
   }
 
   /**
@@ -184,81 +319,124 @@ export class IncidentStorage {
       includeResolved = false,
     } = options;
 
-    let incidents = await this.getAllIncidents();
+    // Build WHERE clause dynamically
+    const conditions: string[] = [];
+    const params: unknown[] = [];
 
     // Filter by severity
     if (severity) {
       const severityList = Array.isArray(severity) ? severity : [severity];
-      incidents = incidents.filter(inc => severityList.includes(inc.severity));
+      conditions.push(`severity IN (${severityList.map(() => '?').join(', ')})`);
+      params.push(...severityList);
     }
 
     // Filter by type
     if (type) {
       const typeList = Array.isArray(type) ? type : [type];
-      incidents = incidents.filter(inc => typeList.includes(inc.type));
+      conditions.push(`type IN (${typeList.map(() => '?').join(', ')})`);
+      params.push(...typeList);
     }
 
     // Filter by time range
     if (from) {
-      incidents = incidents.filter(inc => inc.timestamp >= from);
+      conditions.push('timestamp >= ?');
+      params.push(from);
     }
     if (to) {
-      incidents = incidents.filter(inc => inc.timestamp <= to);
+      conditions.push('timestamp <= ?');
+      params.push(to);
     }
 
     // Filter resolved incidents
     if (!includeResolved) {
-      incidents = incidents.filter(inc => !inc.resolvedAt);
+      conditions.push('resolved_at IS NULL');
     }
 
-    // Apply limit
-    return incidents.slice(0, limit);
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    const sql = `
+      SELECT * FROM incidents
+      ${whereClause}
+      ORDER BY timestamp DESC
+      LIMIT ?
+    `;
+
+    const result = await this.db.query<IncidentRow>(sql, [...params, limit]);
+
+    return result.rows.map(row => this.rowToIncident(row));
   }
 
   /**
    * Resolve an incident
    */
   async resolveIncident(id: string, resolutionNotes?: string): Promise<Incident | null> {
-    const incidents = await this.getAllIncidents();
-    const index = incidents.findIndex(inc => inc.id === id);
+    const resolvedAt = Date.now();
 
-    if (index === -1) {
-      return null;
+    const result = await this.db.query(
+      `UPDATE incidents
+       SET resolved_at = ?, resolution_notes = ?
+       WHERE id = ?`,
+      [resolvedAt, resolutionNotes ?? null, id]
+    );
+
+    if (result.rowCount === 0) {
+      return null; // Not found
     }
 
-    incidents[index]!.resolvedAt = Date.now();
-    if (resolutionNotes) {
-      incidents[index]!.resolutionNotes = resolutionNotes;
+    this.log('info', 'Incident resolved', { id, resolvedAt });
+
+    const incident = await this.getIncident(id);
+
+    // Track analytics event
+    if (incident && platform.analytics) {
+      const durationMs = resolvedAt - incident.timestamp;
+      const durationMinutes = Math.floor(durationMs / 60000);
+
+      platform.analytics.track('incident.resolved', {
+        incidentId: id,
+        type: incident.type,
+        severity: incident.severity,
+        durationMs,
+        durationMinutes,
+        hasResolutionNotes: !!resolutionNotes,
+        wasAnalyzed: !!incident.aiAnalysis,
+      }).catch(() => {
+        // Silently ignore analytics errors
+      });
     }
 
-    // Store back
-    await this.cache.set(this.CACHE_KEY, incidents, this.config.ttlMs);
-
-    this.log('info', 'Incident resolved', {
-      id,
-      resolvedAt: incidents[index]!.resolvedAt,
-    });
-
-    return incidents[index]!;
+    return incident;
   }
 
   /**
    * Delete an incident
    */
   async deleteIncident(id: string): Promise<boolean> {
-    const incidents = await this.getAllIncidents();
-    const initialLength = incidents.length;
-    const filtered = incidents.filter(inc => inc.id !== id);
+    // Get incident before deleting for analytics
+    const incident = await this.getIncident(id);
 
-    if (filtered.length === initialLength) {
-      return false; // Not found
+    const result = await this.db.query('DELETE FROM incidents WHERE id = ?', [id]);
+
+    const deleted = result.rowCount > 0;
+
+    if (deleted) {
+      this.log('info', 'Incident deleted', { id });
+
+      // Track analytics event
+      if (incident && platform.analytics) {
+        platform.analytics.track('incident.deleted', {
+          incidentId: id,
+          type: incident.type,
+          severity: incident.severity,
+          wasResolved: !!incident.resolvedAt,
+          wasAnalyzed: !!incident.aiAnalysis,
+        }).catch(() => {
+          // Silently ignore analytics errors
+        });
+      }
     }
 
-    await this.cache.set(this.CACHE_KEY, filtered, this.config.ttlMs);
-
-    this.log('info', 'Incident deleted', { id });
-
-    return true;
+    return deleted;
   }
 
   /**
@@ -273,59 +451,134 @@ export class IncidentStorage {
     oldestTimestamp: number | null;
     newestTimestamp: number | null;
   }> {
-    const incidents = await this.getAllIncidents();
+    // Get total and timestamp range
+    const totalResult = await this.db.query<{
+      total: number;
+      oldest: number | null;
+      newest: number | null;
+    }>(`
+      SELECT
+        COUNT(*) as total,
+        MIN(timestamp) as oldest,
+        MAX(timestamp) as newest
+      FROM incidents
+    `);
 
-    const stats = {
-      total: incidents.length,
-      bySeverity: {
-        critical: 0,
-        warning: 0,
-        info: 0,
-      } as Record<IncidentSeverity, number>,
-      byType: {} as Record<string, number>,
-      resolved: 0,
-      unresolved: 0,
-      oldestTimestamp: null as number | null,
-      newestTimestamp: null as number | null,
+    const { total, oldest, newest } = totalResult.rows[0]!;
+
+    // Get counts by severity
+    const severityResult = await this.db.query<{
+      severity: IncidentSeverity;
+      count: number;
+    }>('SELECT severity, COUNT(*) as count FROM incidents GROUP BY severity');
+
+    const bySeverity: Record<IncidentSeverity, number> = {
+      critical: 0,
+      warning: 0,
+      info: 0,
     };
-
-    for (const incident of incidents) {
-      stats.bySeverity[incident.severity]++;
-
-      stats.byType[incident.type] = (stats.byType[incident.type] ?? 0) + 1;
-
-      if (incident.resolvedAt) {
-        stats.resolved++;
-      } else {
-        stats.unresolved++;
-      }
+    for (const row of severityResult.rows) {
+      bySeverity[row.severity] = row.count;
     }
 
-    if (incidents.length > 0) {
-      stats.oldestTimestamp = incidents[incidents.length - 1]!.timestamp;
-      stats.newestTimestamp = incidents[0]!.timestamp;
+    // Get counts by type
+    const typeResult = await this.db.query<{
+      type: string;
+      count: number;
+    }>('SELECT type, COUNT(*) as count FROM incidents GROUP BY type');
+
+    const byType: Record<string, number> = {};
+    for (const row of typeResult.rows) {
+      byType[row.type] = row.count;
     }
 
-    return stats;
+    // Get resolved/unresolved counts
+    const resolvedResult = await this.db.query<{
+      resolved: number;
+      unresolved: number;
+    }>(`
+      SELECT
+        SUM(CASE WHEN resolved_at IS NOT NULL THEN 1 ELSE 0 END) as resolved,
+        SUM(CASE WHEN resolved_at IS NULL THEN 1 ELSE 0 END) as unresolved
+      FROM incidents
+    `);
+
+    const { resolved, unresolved } = resolvedResult.rows[0]!;
+
+    return {
+      total,
+      bySeverity,
+      byType,
+      resolved: resolved ?? 0,
+      unresolved: unresolved ?? 0,
+      oldestTimestamp: oldest,
+      newestTimestamp: newest,
+    };
   }
 
   /**
    * Clear all incidents (admin function)
    */
   async clearAll(): Promise<void> {
-    await this.cache.delete(this.CACHE_KEY);
+    await this.db.query('DELETE FROM incidents');
     this.log('warn', 'All incidents cleared');
   }
 
   /**
-   * Get all incidents from cache (internal helper)
+   * Update AI analysis for an incident
    */
-  private async getAllIncidents(): Promise<Incident[]> {
-    const incidents = await this.cache.get<Incident[]>(this.CACHE_KEY);
-    if (!incidents || !Array.isArray(incidents)) {
-      return [];
-    }
-    return incidents;
+  async updateAIAnalysis(id: string, analysis: any): Promise<void> {
+    await this.db.query(
+      `UPDATE incidents
+       SET ai_analysis = ?, ai_analyzed_at = ?
+       WHERE id = ?`,
+      [JSON.stringify(analysis), Date.now(), id]
+    );
+
+    this.log('debug', 'AI analysis updated', { id });
+  }
+
+  /**
+   * Convert database row to Incident object
+   * @private
+   */
+  private rowToIncident(row: IncidentRow): Incident {
+    // Parse JSON fields
+    const affectedServices = row.affected_services
+      ? (JSON.parse(row.affected_services) as string[])
+      : undefined;
+    const metadata = row.metadata ? (JSON.parse(row.metadata) as Record<string, unknown>) : undefined;
+    const aiAnalysis = row.ai_analysis ? JSON.parse(row.ai_analysis) : undefined;
+
+    // Reconstruct related data
+    const relatedData: RelatedData | undefined =
+      row.related_logs_sample || row.related_metrics || row.timeline
+        ? {
+            logs: row.related_logs_sample
+              ? (JSON.parse(row.related_logs_sample) as RelatedLogsData)
+              : undefined,
+            metrics: row.related_metrics
+              ? (JSON.parse(row.related_metrics) as RelatedMetricsData)
+              : undefined,
+            timeline: row.timeline ? (JSON.parse(row.timeline) as TimelineEvent[]) : undefined,
+          }
+        : undefined;
+
+    return {
+      id: row.id,
+      type: row.type as IncidentType,
+      severity: row.severity as IncidentSeverity,
+      title: row.title,
+      details: row.details,
+      timestamp: row.timestamp,
+      resolvedAt: row.resolved_at ?? undefined,
+      resolutionNotes: row.resolution_notes ?? undefined,
+      affectedServices,
+      metadata,
+      relatedData,
+      aiAnalysis,
+      aiAnalyzedAt: row.ai_analyzed_at ?? undefined,
+    };
   }
 
   private log(level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: any): void {
