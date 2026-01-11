@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { PluginErrorEnvelope } from '@kb-labs/rest-api-contracts';
 import { ErrorCode } from '@kb-labs/rest-api-contracts';
+import { platform } from '@kb-labs/core-runtime';
 
 /**
  * Register global error handler for plugin routes
@@ -55,13 +56,14 @@ export function registerErrorGuard(server: FastifyInstance): void {
 
   // Handle uncaught exceptions
   process.on('uncaughtException', (error: Error) => {
-    server.log.error({ err: error }, 'Uncaught exception');
+    platform.logger.fatal('Uncaught exception', error, { source: 'error-guard' });
     // Don't exit - let Fastify handle it
   });
 
   // Handle unhandled rejections
   process.on('unhandledRejection', (reason: unknown) => {
-    server.log.error({ err: reason }, 'Unhandled rejection');
+    const error = reason instanceof Error ? reason : new Error(String(reason));
+    platform.logger.error('Unhandled rejection', error, { source: 'error-guard' });
     // Don't exit - let Fastify handle it
   });
 }

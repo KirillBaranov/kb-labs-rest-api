@@ -606,6 +606,33 @@ class MetricsCollector {
 
 export const metricsCollector = new MetricsCollector();
 
+/**
+ * Sampling strategy for high-frequency endpoints to prevent analytics overload.
+ *
+ * - /metrics, /metrics/json: 1:100 (Prometheus scraping happens every few seconds)
+ * - /health, /ready: 1:10 (Health checks from load balancers)
+ * - All other endpoints: 1:1 (track everything)
+ *
+ * Uses deterministic sampling based on request counter to ensure even distribution.
+ */
+let requestCounter = 0;
+function shouldSampleRequest(route: string): boolean {
+  requestCounter = (requestCounter + 1) % 100;
+
+  // High-frequency metrics endpoints (Prometheus scraping) - sample 1:100
+  if (route === '/api/v1/metrics' || route === '/api/v1/metrics/json') {
+    return requestCounter === 0; // Only track every 100th request
+  }
+
+  // Medium-frequency health checks - sample 1:10
+  if (route === '/api/v1/health' || route === '/api/v1/ready') {
+    return requestCounter % 10 === 0; // Only track every 10th request
+  }
+
+  // All other endpoints - track every request (1:1)
+  return true;
+}
+
 export function registerMetricsMiddleware(server: FastifyInstance): void {
   server.addHook('onRequest', (request, _reply, done) => {
     request.kbMetricsStart = performance.now();
@@ -682,19 +709,25 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     if (method !== 'OPTIONS') {
       const { analytics } = getPlatformServices();
       if (analytics) {
-        analytics.track('api.request', {
-          endpoint: normalizedRoute,
-          method,
-          statusCode: reply.statusCode,
-          durationMs: Math.round(duration),
-          tenantId,
-          pluginId: (request as any).kbPluginId ?? undefined,
-          clientVersion: request.headers['x-client-version'] as string | undefined,
-          userAgent: request.headers['user-agent'] as string | undefined,
-          requestId: request.id as string | undefined,
-        }).catch(() => {
-          // Silently ignore analytics errors - should not affect request handling
-        });
+        // Sample high-frequency health check endpoints (1:100 for metrics, 1:10 for health/ready)
+        // This prevents overwhelming analytics with 142k+ ping-pong events
+        const shouldSample = shouldSampleRequest(normalizedRoute);
+
+        if (shouldSample) {
+          analytics.track('api.request', {
+            endpoint: normalizedRoute,
+            method,
+            statusCode: reply.statusCode,
+            durationMs: Math.round(duration),
+            tenantId,
+            pluginId: (request as any).kbPluginId ?? undefined,
+            clientVersion: request.headers['x-client-version'] as string | undefined,
+            userAgent: request.headers['user-agent'] as string | undefined,
+            requestId: request.id as string | undefined,
+          }).catch(() => {
+            // Silently ignore analytics errors - should not affect request handling
+          });
+        }
       }
     }
 
