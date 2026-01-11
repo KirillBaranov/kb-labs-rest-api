@@ -11,6 +11,8 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { HistoricalMetricsCollector } from '../services/historical-metrics';
 import type { IncidentStorage } from '../services/incident-storage';
+import { IncidentAnalyzer } from '../services/incident-analyzer';
+import { platform } from '@kb-labs/core-runtime';
 
 const execAsync = promisify(exec);
 
@@ -38,9 +40,12 @@ export async function registerObservabilityRoutes(
   const devkitPaths = resolvePaths(basePath, '/observability/devkit');
   const metricsHistoryPaths = resolvePaths(basePath, '/observability/metrics/history');
   const metricsHeatmapPaths = resolvePaths(basePath, '/observability/metrics/heatmap');
+  const incidentsListPaths = resolvePaths(basePath, '/observability/incidents');
+  const incidentsDetailPaths = resolvePaths(basePath, '/observability/incidents/:id');
   const incidentsCreatePaths = resolvePaths(basePath, '/observability/incidents');
   const incidentsHistoryPaths = resolvePaths(basePath, '/observability/incidents/history');
   const incidentsResolvePaths = resolvePaths(basePath, '/observability/incidents/:id/resolve');
+  const incidentsAnalyzePaths = resolvePaths(basePath, '/observability/incidents/:id/analyze');
   const insightsChatPaths = resolvePaths(basePath, '/observability/insights/chat');
 
   // GET /api/v1/observability/state-broker
@@ -91,7 +96,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to fetch State Broker stats');
+        platform.logger.error('Failed to fetch State Broker stats', error instanceof Error ? error : new Error(String(error)));
 
         // Check if it's a timeout error
         const isTimeout = error instanceof Error && error.name === 'AbortError';
@@ -244,7 +249,7 @@ export async function registerObservabilityRoutes(
           }
         }
 
-        fastify.log.error({ err: error }, 'Failed to execute DevKit health check');
+        platform.logger.error('Failed to execute DevKit health check', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -353,7 +358,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error, query }, 'Failed to query historical metrics');
+        platform.logger.error('Failed to query historical metrics', error instanceof Error ? error : new Error(String(error)), { query });
 
         return reply.code(500).send({
           ok: false,
@@ -454,13 +459,157 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error, query }, 'Failed to query heatmap data');
+        platform.logger.error('Failed to query heatmap data', error instanceof Error ? error : new Error(String(error)), { query });
 
         return reply.code(500).send({
           ok: false,
           error: {
             code: 'HEATMAP_ERROR',
             message: error instanceof Error ? error.message : 'Failed to query heatmap data',
+          },
+        });
+      }
+    });
+  }
+
+  // GET /api/v1/observability/incidents
+  // List incidents with filters (active by default, use includeResolved=true for all)
+  for (const path of incidentsListPaths) {
+    fastify.get(path, {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', default: 50 },
+            severity: {
+              type: 'string',
+              enum: ['critical', 'warning', 'info'],
+            },
+            type: {
+              type: 'string',
+              enum: ['error_rate', 'latency_spike', 'plugin_failure', 'adapter_failure', 'system_health', 'custom'],
+            },
+            from: { type: 'integer' },
+            to: { type: 'integer' },
+            includeResolved: { type: 'boolean', default: false },
+          },
+        },
+      },
+    }, async (request, reply) => {
+      if (!incidentStorage) {
+        return reply.code(503).send({
+          ok: false,
+          error: {
+            code: 'INCIDENTS_NOT_CONFIGURED',
+            message: 'Incident storage is not configured',
+          },
+        });
+      }
+
+      try {
+        const query = request.query as any;
+        const incidents = await incidentStorage.queryIncidents({
+          limit: query.limit ?? 50,
+          severity: query.severity,
+          type: query.type,
+          from: query.from,
+          to: query.to,
+          includeResolved: query.includeResolved ?? false,
+        });
+
+        // Get stats for summary
+        const stats = await incidentStorage.getStats();
+
+        return {
+          ok: true,
+          data: {
+            incidents,
+            summary: {
+              total: stats.total,
+              unresolved: stats.unresolved,
+              bySeverity: stats.bySeverity,
+              showing: incidents.length,
+            },
+          },
+        };
+      } catch (error) {
+        fastify.log.error('Failed to list incidents', error);
+
+        return reply.code(500).send({
+          ok: false,
+          error: {
+            code: 'INCIDENTS_LIST_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to list incidents',
+          },
+        });
+      }
+    });
+  }
+
+  // GET /api/v1/observability/incidents/:id
+  // Get incident details by ID
+  for (const path of incidentsDetailPaths) {
+    fastify.get(path, {
+      schema: {
+        params: {
+          type: 'object',
+          properties: {
+            id: { type: 'string' },
+          },
+          required: ['id'],
+        },
+      },
+    }, async (request, reply) => {
+      if (!incidentStorage) {
+        return reply.code(503).send({
+          ok: false,
+          error: {
+            code: 'INCIDENTS_NOT_CONFIGURED',
+            message: 'Incident storage is not configured',
+          },
+        });
+      }
+
+      const { id } = request.params as { id: string };
+
+      try {
+        const incident = await incidentStorage.getIncident(id);
+
+        if (!incident) {
+          return reply.code(404).send({
+            ok: false,
+            error: {
+              code: 'INCIDENT_NOT_FOUND',
+              message: `Incident ${id} not found`,
+            },
+          });
+        }
+
+        // Track analytics
+        if (platform.analytics) {
+          platform.analytics.track('incident.viewed', {
+            incidentId: id,
+            type: incident.type,
+            severity: incident.severity,
+            isResolved: !!incident.resolvedAt,
+            hasAIAnalysis: !!incident.aiAnalysis,
+          }).catch(() => {
+            // Silently ignore analytics errors
+          });
+        }
+
+        return {
+          ok: true,
+          data: incident,
+        };
+      } catch (error) {
+        fastify.log.error('Failed to get incident', error);
+
+        return reply.code(500).send({
+          ok: false,
+          error: {
+            code: 'INCIDENT_GET_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to get incident',
           },
         });
       }
@@ -519,7 +668,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to create incident');
+        platform.logger.error('Failed to create incident', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -583,7 +732,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to query incidents');
+        platform.logger.error('Failed to query incidents', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -650,7 +799,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to resolve incident');
+        platform.logger.error('Failed to resolve incident', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -842,7 +991,7 @@ Be concise but thorough. Use markdown formatting.`;
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to generate insights');
+        platform.logger.error('Failed to generate insights', error instanceof Error ? error : new Error(String(error)));
 
         // Track error analytics
         if (platform?.analytics) {
@@ -865,5 +1014,267 @@ Be concise but thorough. Use markdown formatting.`;
     });
   }
 
-  fastify.log.info('Observability routes registered');
+  // POST /api/v1/observability/incidents/:id/analyze
+  // Analyze incident using AI to identify root causes and recommendations
+  for (const path of incidentsAnalyzePaths) {
+    fastify.post(path, async (request, reply) => {
+      if (!incidentStorage) {
+        return reply.code(503).send({
+          ok: false,
+          error: {
+            code: 'INCIDENTS_NOT_CONFIGURED',
+            message: 'Incident storage is not configured',
+          },
+        });
+      }
+
+      const { id } = request.params as { id: string };
+
+      try {
+        // Fetch incident
+        const incident = await incidentStorage.getIncident(id);
+
+        if (!incident) {
+          return reply.code(404).send({
+            ok: false,
+            error: {
+              code: 'INCIDENT_NOT_FOUND',
+              message: `Incident ${id} not found`,
+            },
+          });
+        }
+
+        // Check if already analyzed
+        if (incident.aiAnalysis && incident.aiAnalyzedAt) {
+          const ageMs = Date.now() - incident.aiAnalyzedAt;
+          const ageMinutes = Math.floor(ageMs / 60000);
+
+          // Return cached analysis if less than 1 hour old
+          if (ageMs < 60 * 60 * 1000) {
+            return {
+              ok: true,
+              data: {
+                ...incident.aiAnalysis,
+                cached: true,
+                analyzedAt: incident.aiAnalyzedAt,
+                ageMinutes,
+              },
+            };
+          }
+        }
+
+        // Analyze incident with LLM
+        const analyzer = new IncidentAnalyzer(
+          {
+            debug: process.env.NODE_ENV !== 'production',
+          },
+          fastify.log as any
+        );
+
+        const analysis = await analyzer.analyze(incident);
+
+        // Store analysis in incident
+        await incidentStorage.updateAIAnalysis(id, analysis);
+
+        // Track analytics
+        if (platform.analytics) {
+          platform.analytics.track('incident.analyzed', {
+            incidentId: id,
+            type: incident.type,
+            severity: incident.severity,
+            rootCausesCount: analysis.rootCauses.length,
+            recommendationsCount: analysis.recommendations.length,
+          }).catch(() => {
+            // Silently ignore analytics errors
+          });
+        }
+
+        return {
+          ok: true,
+          data: {
+            ...analysis,
+            cached: false,
+          },
+        };
+      } catch (error) {
+        fastify.log.error('Failed to analyze incident', error);
+
+        // Track error in analytics
+        if (platform.analytics) {
+          platform.analytics.track('incident.analysis_error', {
+            incidentId: id,
+            error: error instanceof Error ? error.message : 'Unknown error',
+          }).catch(() => {
+            // Silently ignore analytics errors
+          });
+        }
+
+        return reply.code(500).send({
+          ok: false,
+          error: {
+            code: 'ANALYSIS_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to analyze incident',
+          },
+        });
+      }
+    });
+  }
+
+  // ========================================
+  // TEST ENDPOINTS (for incident testing)
+  // ========================================
+
+  // Test endpoint: Create incident manually
+  const testCreateIncidentPaths = resolvePaths(basePath, '/test/create-incident');
+  for (const path of testCreateIncidentPaths) {
+    fastify.post(path, async (request, reply) => {
+      if (!incidentStorage) {
+        return reply.code(500).send({
+          ok: false,
+          error: { code: 'INCIDENT_STORAGE_NOT_INITIALIZED', message: 'Incident storage not initialized' },
+        });
+      }
+
+      try {
+        const {
+          type = 'custom',
+          severity = 'warning',
+          title = 'Test Incident',
+          details,
+          relatedData,
+        } = request.body as any;
+
+        const incident = await incidentStorage.createIncident({
+          type,
+          severity,
+          title,
+          details: details || 'This is a test incident created manually for testing purposes.',
+          timestamp: Date.now(),
+          metadata: {
+            testMode: true,
+            createdVia: 'test-endpoint',
+          },
+          relatedData: relatedData || {
+            timeline: [
+              {
+                timestamp: Date.now(),
+                event: 'Test incident created via /test/create-incident',
+                source: 'manual' as const,
+              },
+            ],
+          },
+        });
+
+        fastify.log.info('Test incident created', { id: incident.id });
+
+        return { ok: true, data: incident };
+      } catch (error) {
+        fastify.log.error('Failed to create test incident', error);
+        return reply.code(500).send({
+          ok: false,
+          error: {
+            code: 'TEST_INCIDENT_CREATION_FAILED',
+            message: error instanceof Error ? error.message : 'Failed to create test incident',
+          },
+        });
+      }
+    });
+  }
+
+  // Test endpoint: Trigger errors (auto-creates error_rate incident)
+  const testTriggerErrorsPaths = resolvePaths(basePath, '/test/trigger-errors');
+  for (const path of testTriggerErrorsPaths) {
+    fastify.get(path, async (request, reply) => {
+      const { count = 10 } = request.query as any;
+      const errorCount = Math.min(Math.max(1, parseInt(count, 10) || 10), 100); // 1-100 errors
+
+      fastify.log.info(`Triggering ${errorCount} test errors`);
+
+      // Generate errors
+      for (let i = 0; i < errorCount; i++) {
+        // Log errors to platform
+        platform.logger.error(`Test error ${i + 1}/${errorCount}`, {
+          testMode: true,
+          errorNumber: i + 1,
+          totalErrors: errorCount,
+        });
+
+        // Make the request fail to increase error rate
+        if (i === errorCount - 1) {
+          // Last error - return error response
+          return reply.code(500).send({
+            ok: false,
+            error: {
+              code: 'TEST_ERROR_TRIGGERED',
+              message: `Generated ${errorCount} test errors. Check /observability/incidents in ~30 seconds for auto-created incident.`,
+            },
+          });
+        }
+      }
+
+      return {
+        ok: true,
+        message: `Triggered ${errorCount} test errors. Incident should be auto-created in next detection cycle (~30s).`,
+      };
+    });
+  }
+
+  // Test endpoint: Simulate high latency (auto-creates latency_spike incident)
+  const testSimulateLatencyPaths = resolvePaths(basePath, '/test/simulate-latency');
+  for (const path of testSimulateLatencyPaths) {
+    fastify.get(path, async (request, reply) => {
+      const { delay = 2000 } = request.query as any;
+      const delayMs = Math.min(Math.max(100, parseInt(delay, 10) || 2000), 10000); // 100ms-10s
+
+      fastify.log.info(`Simulating ${delayMs}ms latency`);
+
+      // Simulate slow response
+      await new Promise(resolve => setTimeout(resolve, delayMs));
+
+      return {
+        ok: true,
+        message: `Simulated ${delayMs}ms latency. Call this endpoint multiple times to trigger latency_spike incident.`,
+        actualDelay: delayMs,
+      };
+    });
+  }
+
+  // Test endpoint: Bulk error generator (guaranteed to trigger incident)
+  const testBulkErrorsPaths = resolvePaths(basePath, '/test/bulk-errors');
+  for (const path of testBulkErrorsPaths) {
+    fastify.post(path, async (request, reply) => {
+      const { successCount = 10, errorCount = 50 } = request.body as any;
+
+      fastify.log.info('Generating bulk requests for incident testing', {
+        successCount,
+        errorCount,
+      });
+
+      // Generate successful requests
+      for (let i = 0; i < successCount; i++) {
+        platform.logger.info(`Bulk test - success ${i + 1}/${successCount}`);
+      }
+
+      // Generate error requests
+      for (let i = 0; i < errorCount; i++) {
+        platform.logger.error(`Bulk test - error ${i + 1}/${errorCount}`, {
+          testMode: true,
+          bulkTest: true,
+          errorIndex: i,
+        });
+      }
+
+      const totalRequests = successCount + errorCount;
+      const errorRate = (errorCount / totalRequests) * 100;
+
+      return {
+        ok: true,
+        message: `Generated ${totalRequests} requests (${successCount} success, ${errorCount} errors)`,
+        errorRate: `${errorRate.toFixed(1)}%`,
+        note: 'Incident should be auto-created in next detection cycle (~30s)',
+      };
+    });
+  }
+
+  fastify.log.info('Observability routes registered (including test endpoints)');
 }

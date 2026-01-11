@@ -296,7 +296,7 @@ export async function registerAdaptersRoutes(
           });
         }
 
-        fastify.log.error({ err: error }, 'Failed to fetch LLM usage stats');
+        platform.logger.error('Failed to fetch LLM usage stats', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -552,7 +552,7 @@ export async function registerAdaptersRoutes(
           });
         }
 
-        fastify.log.error({ err: error }, 'Failed to fetch Embeddings usage stats');
+        platform.logger.error('Failed to fetch Embeddings usage stats', error instanceof Error ? error : new Error(String(error)));
         return reply.code(500).send({
           ok: false,
           error: {
@@ -731,7 +731,7 @@ export async function registerAdaptersRoutes(
           });
         }
 
-        fastify.log.error({ err: error }, 'Failed to fetch VectorStore usage stats');
+        platform.logger.error('Failed to fetch VectorStore usage stats', error instanceof Error ? error : new Error(String(error)));
         return reply.code(500).send({
           ok: false,
           error: {
@@ -876,7 +876,7 @@ export async function registerAdaptersRoutes(
           });
         }
 
-        fastify.log.error({ err: error }, 'Failed to fetch Cache usage stats');
+        platform.logger.error('Failed to fetch Cache usage stats', error instanceof Error ? error : new Error(String(error)));
         return reply.code(500).send({
           ok: false,
           error: {
@@ -1020,7 +1020,7 @@ export async function registerAdaptersRoutes(
           });
         }
 
-        fastify.log.error({ err: error }, 'Failed to fetch Storage usage stats');
+        platform.logger.error('Failed to fetch Storage usage stats', error instanceof Error ? error : new Error(String(error)));
         return reply.code(500).send({
           ok: false,
           error: {

@@ -8,6 +8,7 @@ import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PlatformConfigResponse, PlatformConfigPayload } from '@kb-labs/rest-api-contracts';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import { readKbConfig } from '@kb-labs/core-config';
+import { platform } from '@kb-labs/core-runtime';
 
 /**
  * Sensitive keys to redact from adapterOptions
@@ -124,7 +125,7 @@ export async function registerPlatformRoutes(
 
         return reply.send(response);
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to load platform config');
+        platform.logger.error('Failed to load platform config', error instanceof Error ? error : new Error(String(error)));
         return reply.code(500).send({
           ok: false,
           error: {

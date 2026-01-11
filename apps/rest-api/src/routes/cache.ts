@@ -1,3 +1,4 @@
+import { platform } from '@kb-labs/core-runtime';
 /**
  * @module @kb-labs/rest-api-app/routes/cache
  * Cache management routes
@@ -29,7 +30,7 @@ export async function registerCacheRoutes(
     const beforeSnapshot = cliApi.snapshot();
     const previousRev = beforeSnapshot.rev;
 
-    server.log.info({
+    platform.logger.info({
       requestId: request.id,
       previousRev,
     }, 'Manual cache invalidation requested');
@@ -45,7 +46,7 @@ export async function registerCacheRoutes(
 
       const elapsed = Date.now() - start;
 
-      server.log.info({
+      platform.logger.info({
         requestId: request.id,
         previousRev,
         newRev: afterSnapshot.rev,
@@ -71,11 +72,14 @@ export async function registerCacheRoutes(
     } catch (error) {
       const elapsed = Date.now() - start;
 
-      server.log.error({
-        requestId: request.id,
-        error: error instanceof Error ? error.message : String(error),
-        elapsedMs: elapsed,
-      }, 'Cache invalidation failed');
+      platform.logger.error(
+        'Cache invalidation failed',
+        error instanceof Error ? error : new Error(String(error)),
+        {
+          requestId: request.id as string,
+          elapsedMs: elapsed,
+        }
+      );
 
       return reply.code(500).send({
         ok: false,

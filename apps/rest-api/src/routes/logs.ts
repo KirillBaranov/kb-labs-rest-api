@@ -34,13 +34,19 @@ function toFrontendLogRecord(record: LogRecord): any {
     ? mapPinoLevelToString(pinoLevel)
     : record.level;
 
+  // Ensure message is a string
+  const messageStr = typeof record.message === 'string'
+    ? record.message
+    : JSON.stringify(record.message);
+
   // Remove 'level' and 'time' from fields to avoid overwriting our converted values
   const { level: _level, time: _time, ...restFields } = record.fields;
 
   return {
+    id: record.id, // Include ID for navigation to detail page
     time: new Date(record.timestamp).toISOString(),
     level: levelStr,
-    msg: record.message,
+    msg: messageStr,
     plugin: record.source,
     ...restFields,
   };
@@ -117,6 +123,85 @@ function buildLogSummaryPrompt(
 }
 
 /**
+ * Extract correlation keys from log for finding related logs
+ */
+function extractCorrelationKeys(log: LogRecord): {
+  requestId?: string;
+  traceId?: string;
+  executionId?: string;
+  sessionId?: string;
+} {
+  return {
+    requestId: log.fields.requestId as string | undefined ??
+               log.fields.reqId as string | undefined,
+    traceId: log.fields.traceId as string | undefined,
+    executionId: log.fields.executionId as string | undefined,
+    sessionId: log.fields.sessionId as string | undefined,
+  };
+}
+
+/**
+ * Find logs related to the given log
+ * Strategy:
+ * 1. Try requestId/traceId/executionId (most specific)
+ * 2. Fallback to time window + same source
+ */
+async function findRelatedLogs(targetLog: LogRecord): Promise<any[]> {
+  const correlationKeys = extractCorrelationKeys(targetLog);
+  const timeWindow = 60000; // 1 minute before/after
+
+  // Strategy 1: Find by correlation IDs (most precise)
+  if (correlationKeys.requestId || correlationKeys.traceId || correlationKeys.executionId) {
+    const relatedLogs: LogRecord[] = [];
+
+    // Query all logs in time window
+    const result = await platform.logs.query({
+      from: targetLog.timestamp - timeWindow,
+      to: targetLog.timestamp + timeWindow,
+    }, {
+      limit: 1000,
+    });
+
+    // Filter in-memory by correlation keys
+    for (const log of result.logs) {
+      if (log.id === targetLog.id) continue; // Skip self
+
+      const logKeys = extractCorrelationKeys(log);
+
+      // Match any correlation key
+      if (
+        (correlationKeys.requestId && logKeys.requestId === correlationKeys.requestId) ||
+        (correlationKeys.traceId && logKeys.traceId === correlationKeys.traceId) ||
+        (correlationKeys.executionId && logKeys.executionId === correlationKeys.executionId) ||
+        (correlationKeys.sessionId && logKeys.sessionId === correlationKeys.sessionId)
+      ) {
+        relatedLogs.push(log);
+      }
+    }
+
+    if (relatedLogs.length > 0) {
+      return relatedLogs
+        .sort((a, b) => a.timestamp - b.timestamp)
+        .map(toFrontendLogRecord);
+    }
+  }
+
+  // Strategy 2: Fallback to time window + same source
+  const result = await platform.logs.query({
+    source: targetLog.source,
+    from: targetLog.timestamp - timeWindow,
+    to: targetLog.timestamp + timeWindow,
+  }, {
+    limit: 50,
+  });
+
+  return result.logs
+    .filter(log => log.id !== targetLog.id)
+    .sort((a, b) => a.timestamp - b.timestamp)
+    .map(toFrontendLogRecord);
+}
+
+/**
  * Generate fallback summary when LLM is unavailable
  */
 function generateFallbackSummary(stats: any, logs: any[]): string {
@@ -183,76 +268,173 @@ export async function registerLogRoutes(
       executionId?: string;
       tenantId?: string;
       search?: string;
-      limit?: number;
-      offset?: number;
+      limit?: string;
+      offset?: string;
     };
   }>('/api/v1/logs', async (request, reply) => {
-    // Check if logger supports buffering
-    const buffer = platform.logger.getLogBuffer?.();
-    if (!buffer) {
+    try {
+      // Parse numeric query params (Fastify doesn't parse them automatically)
+      const limit = request.query.limit ? parseInt(request.query.limit, 10) : 100;
+      const offset = request.query.offset ? parseInt(request.query.offset, 10) : 0;
+
+      // Build query from request params
+      const query: LogQuery = {
+        level: request.query.level as any,
+        source: request.query.plugin,
+        from: request.query.from ? new Date(request.query.from).getTime() : undefined,
+        to: request.query.to ? new Date(request.query.to).getTime() : undefined,
+      };
+
+      // Query logs using unified service
+      let result;
+      if (request.query.search) {
+        // Use full-text search if search query provided
+        result = await platform.logs.search(request.query.search, {
+          limit,
+          offset,
+        });
+      } else {
+        // Regular query with filters
+        result = await platform.logs.query(query, {
+          limit,
+          offset,
+        });
+      }
+
+      // Convert to frontend format
+      const frontendLogs = result.logs.map(toFrontendLogRecord);
+
+      // Get stats for response metadata
+      const stats = await platform.logs.getStats();
+
+      return {
+        ok: true,
+        data: {
+          logs: frontendLogs,
+          total: result.total,
+          hasMore: result.hasMore,
+          filters: request.query,
+          source: 'source' in result ? result.source : undefined,
+          stats: {
+            buffer: stats.buffer ? {
+              size: stats.buffer.size,
+              maxSize: stats.buffer.maxSize,
+              oldest: stats.buffer.oldestTimestamp ? new Date(stats.buffer.oldestTimestamp).toISOString() : undefined,
+              newest: stats.buffer.newestTimestamp ? new Date(stats.buffer.newestTimestamp).toISOString() : undefined,
+            } : undefined,
+            persistence: stats.persistence ? {
+              totalLogs: stats.persistence.totalLogs,
+              oldestTimestamp: stats.persistence.oldestTimestamp ? new Date(stats.persistence.oldestTimestamp).toISOString() : undefined,
+              newestTimestamp: stats.persistence.newestTimestamp ? new Date(stats.persistence.newestTimestamp).toISOString() : undefined,
+              sizeBytes: stats.persistence.sizeBytes,
+            } : undefined,
+          },
+        },
+      };
+    } catch (error: any) {
       return reply.code(503).send({
         ok: false,
-        error: 'Log streaming not enabled',
-        message: 'Logger adapter does not support buffering. Enable streaming in kb.config.json',
+        error: 'Log query failed',
+        message: error?.message ?? 'Unknown error',
       });
     }
-
-    // Build query from request params (convert frontend format to backend format)
-    const query: LogQuery = {
-      level: request.query.level as any,
-      source: request.query.plugin,
-      startTime: request.query.from ? new Date(request.query.from).getTime() : undefined,
-      endTime: request.query.to ? new Date(request.query.to).getTime() : undefined,
-      limit: request.query.limit ?? 100,
-    };
-
-    // Query logs from buffer
-    const logs = buffer.query(query);
-    const stats = buffer.getStats();
-
-    // Convert to frontend format
-    const frontendLogs = logs.map(toFrontendLogRecord);
-
-    // Apply text search filter if provided
-    let filteredLogs = frontendLogs;
-    if (request.query.search) {
-      const search = request.query.search.toLowerCase();
-      filteredLogs = frontendLogs.filter(log =>
-        log.msg?.toLowerCase().includes(search)
-      );
-    }
-
-    // Apply offset pagination
-    const offset = request.query.offset ?? 0;
-    const paginatedLogs = filteredLogs.slice(offset, offset + query.limit!);
-
-    return {
-      ok: true,
-      data: {
-        logs: paginatedLogs,
-        total: filteredLogs.length,
-        filters: request.query,
-        bufferStats: {
-          size: stats.total,
-          maxSize: stats.bufferSize,
-          oldest: stats.oldestTimestamp ? new Date(stats.oldestTimestamp).toISOString() : undefined,
-          newest: stats.newestTimestamp ? new Date(stats.newestTimestamp).toISOString() : undefined,
-        },
-      },
-    };
   });
+
+  /**
+   * GET /api/v1/logs/:id
+   * Get single log by ID with related logs
+   */
+  server.get<{
+    Params: { id: string };
+    Querystring: { includeRelated?: string };
+  }>(
+    '/api/v1/logs/:id',
+    async (request, reply) => {
+      try {
+        const log = await platform.logs.getById(request.params.id);
+
+        if (!log) {
+          return reply.code(404).send({
+            ok: false,
+            error: 'Log not found',
+            message: `Log with ID '${request.params.id}' does not exist`,
+          });
+        }
+
+        const frontendLog = toFrontendLogRecord(log);
+
+        // Optionally include related logs
+        let relatedLogs: any[] = [];
+        if (request.query.includeRelated === 'true') {
+          relatedLogs = await findRelatedLogs(log);
+        }
+
+        return {
+          ok: true,
+          data: {
+            log: frontendLog,
+            related: relatedLogs.length > 0 ? relatedLogs : undefined,
+          },
+        };
+      } catch (error: any) {
+        return reply.code(500).send({
+          ok: false,
+          error: 'Failed to fetch log',
+          message: error?.message ?? 'Unknown error',
+        });
+      }
+    }
+  );
+
+  /**
+   * GET /api/v1/logs/:id/related
+   * Get logs related to a specific log (same trace/execution/request)
+   */
+  server.get<{ Params: { id: string } }>(
+    '/api/v1/logs/:id/related',
+    async (request, reply) => {
+      try {
+        const log = await platform.logs.getById(request.params.id);
+
+        if (!log) {
+          return reply.code(404).send({
+            ok: false,
+            error: 'Log not found',
+            message: `Log with ID '${request.params.id}' does not exist`,
+          });
+        }
+
+        const relatedLogs = await findRelatedLogs(log);
+
+        return {
+          ok: true,
+          data: {
+            total: relatedLogs.length,
+            logs: relatedLogs,
+            correlationKeys: extractCorrelationKeys(log),
+          },
+        };
+      } catch (error: any) {
+        return reply.code(500).send({
+          ok: false,
+          error: 'Failed to fetch related logs',
+          message: error?.message ?? 'Unknown error',
+        });
+      }
+    }
+  );
 
   /**
    * GET /api/v1/logs/stream
    * Server-Sent Events stream for real-time logs
    */
   server.get('/api/v1/logs/stream', async (request, reply) => {
-    // Check if logger supports buffering
-    const buffer = platform.logger.getLogBuffer?.();
-    if (!buffer) {
+    // Check if streaming is supported
+    const caps = platform.logs.getCapabilities();
+    if (!caps.hasStreaming) {
       return reply.code(503).send({
         error: 'Log streaming not enabled',
-        message: 'Logger adapter does not support buffering. Enable streaming in kb.config.json',
+        message: 'Logger adapter does not support streaming. Enable logRingBuffer in kb.config.json',
       });
     }
 
@@ -285,8 +467,8 @@ export async function registerLogRoutes(
       return;
     }
 
-    // Subscribe to log stream
-    const unsubscribe = buffer.subscribe((log) => {
+    // Subscribe to log stream using unified service
+    const unsubscribe = platform.logs.subscribe((log) => {
       // Check if connection is still alive before writing
       if (!streamClosed && !reply.raw.writableEnded && !reply.raw.destroyed) {
         try {
@@ -325,25 +507,38 @@ export async function registerLogRoutes(
 
   /**
    * GET /api/v1/logs/stats
-   * Get buffer statistics
+   * Get combined log statistics from all backends
    */
   server.get('/api/v1/logs/stats', async (request, reply) => {
-    // Check if logger supports buffering
-    const buffer = platform.logger.getLogBuffer?.();
-    if (!buffer) {
-      return reply.code(503).send({
-        error: 'Log streaming not enabled',
-        message: 'Logger adapter does not support buffering. Enable streaming in kb.config.json',
+    try {
+      const stats = await platform.logs.getStats();
+      const caps = platform.logs.getCapabilities();
+
+      return {
+        ok: true,
+        data: {
+          capabilities: caps,
+          buffer: stats.buffer ? {
+            size: stats.buffer.size,
+            maxSize: stats.buffer.maxSize,
+            oldest: stats.buffer.oldestTimestamp ? new Date(stats.buffer.oldestTimestamp).toISOString() : undefined,
+            newest: stats.buffer.newestTimestamp ? new Date(stats.buffer.newestTimestamp).toISOString() : undefined,
+          } : undefined,
+          persistence: stats.persistence ? {
+            totalLogs: stats.persistence.totalLogs,
+            oldest: stats.persistence.oldestTimestamp ? new Date(stats.persistence.oldestTimestamp).toISOString() : undefined,
+            newest: stats.persistence.newestTimestamp ? new Date(stats.persistence.newestTimestamp).toISOString() : undefined,
+            sizeBytes: stats.persistence.sizeBytes,
+          } : undefined,
+        },
+      };
+    } catch (error: any) {
+      return reply.code(500).send({
+        ok: false,
+        error: 'Failed to fetch stats',
+        message: error?.message ?? 'Unknown error',
       });
     }
-
-    const stats = buffer.getStats();
-    return {
-      size: stats.total,
-      maxSize: stats.bufferSize,
-      oldest: stats.oldestTimestamp ? new Date(stats.oldestTimestamp).toISOString() : undefined,
-      newest: stats.newestTimestamp ? new Date(stats.newestTimestamp).toISOString() : undefined,
-    };
   });
 
   /**
@@ -378,30 +573,20 @@ export async function registerLogRoutes(
       };
     };
   }>('/api/v1/logs/summarize', async (request, reply) => {
-    // Check if logger supports buffering
-    const buffer = platform.logger.getLogBuffer?.();
-    if (!buffer) {
-      return reply.code(503).send({
-        ok: false,
-        error: 'Log streaming not enabled',
-        message: 'Logger adapter does not support buffering. Enable streaming in kb.config.json',
-      });
-    }
-
     const { timeRange, filters, groupBy, question, includeContext } = request.body;
 
-    // Build query from request
-    const query: LogQuery = {
-      level: filters?.level as any,
-      source: filters?.plugin,
-      startTime: timeRange?.from ? new Date(timeRange.from).getTime() : undefined,
-      endTime: timeRange?.to ? new Date(timeRange.to).getTime() : undefined,
-      limit: 1000, // Limit for summarization
-    };
+    try {
+      // Build query from request
+      const query: LogQuery = {
+        level: filters?.level as any,
+        source: filters?.plugin,
+        from: timeRange?.from ? new Date(timeRange.from).getTime() : undefined,
+        to: timeRange?.to ? new Date(timeRange.to).getTime() : undefined,
+      };
 
-    // Query logs
-    const logs = buffer.query(query);
-    const frontendLogs = logs.map(toFrontendLogRecord);
+      // Query logs using unified service
+      const result = await platform.logs.query(query, { limit: 1000 });
+      const frontendLogs = result.logs.map(toFrontendLogRecord);
 
     // Additional filters (traceId, executionId)
     let filteredLogs = frontendLogs;
@@ -495,7 +680,9 @@ export async function registerLogRoutes(
 
       } catch (error) {
         // Graceful degradation
-        server.log.warn({ err: error }, 'LLM summarization failed, using fallback');
+        platform.logger.warn('LLM summarization failed, using fallback', {
+          error: error instanceof Error ? error.message : String(error),
+        });
         aiSummary = generateFallbackSummary(stats, filteredLogs);
         message = 'AI summarization unavailable, showing statistical summary';
       }
@@ -505,20 +692,27 @@ export async function registerLogRoutes(
       message = platform.llm ? 'No question provided' : 'LLM not configured';
     }
 
-    // Return structured data with AI summary
-    return {
-      ok: true,
-      data: {
-        summary: {
-          question: question || 'General log summary',
-          timeRange: stats.timeRange,
-          total: stats.total,
-          stats,
-          groups,
+      // Return structured data with AI summary
+      return {
+        ok: true,
+        data: {
+          summary: {
+            question: question || 'General log summary',
+            timeRange: stats.timeRange,
+            total: stats.total,
+            stats,
+            groups,
+          },
+          aiSummary,
+          message,
         },
-        aiSummary,
-        message,
-      },
-    };
+      };
+    } catch (error: any) {
+      return reply.code(500).send({
+        ok: false,
+        error: 'Log summarization failed',
+        message: error?.message ?? 'Unknown error',
+      });
+    }
   });
 }

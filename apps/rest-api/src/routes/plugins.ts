@@ -73,17 +73,17 @@ export async function registerPluginRoutes(
       },
     });
     const workspaceRoot = workspaceResolution.rootDir;
-    server.log.info({
+    platform.logger.info('Resolved workspace root', {
       repoRoot,
       workspaceRoot,
       source: workspaceResolution.source,
-    }, 'Resolved workspace root');
+    });
 
     const snapshot = cliApi.snapshot();
     const manifests = extractSnapshotManifests(snapshot);
 
     if (snapshot.partial || snapshot.stale) {
-      server.log.warn({
+      platform.logger.warn({
         partial: snapshot.partial,
         stale: snapshot.stale,
         rev: snapshot.rev,
@@ -126,7 +126,7 @@ export async function registerPluginRoutes(
         }
 
         if (restValidationErrors.length > 0) {
-          server.log.warn({
+          platform.logger.warn({
             plugin: `${manifest.id}@${manifest.version}`,
             pluginRoot,
             remediation: 'Verify REST handler file and export exist',
@@ -144,11 +144,11 @@ export async function registerPluginRoutes(
           });
 
           if (validRoutes.length === 0) {
-            server.log.error({
+            platform.logger.error('All routes failed validation, skipping plugin', undefined, {
               plugin: `${manifest.id}@${manifest.version}`,
               pluginRoot,
               errors: restValidationErrors,
-            }, 'All routes failed validation, skipping plugin');
+            });
             return {
               success: false,
               pluginId: manifest.id,
@@ -160,7 +160,7 @@ export async function registerPluginRoutes(
 
           // Replace routes with only valid ones
           manifest.rest!.routes = validRoutes;
-          server.log.info({
+          platform.logger.info({
             plugin: `${manifest.id}@${manifest.version}`,
             totalRoutes: manifest.rest!.routes.length + restValidationErrors.length,
             validRoutes: validRoutes.length,
@@ -174,7 +174,7 @@ export async function registerPluginRoutes(
             ? manifest.rest.basePath.replace(/^\/v1/, config.basePath)
             : `${config.basePath}/plugins/${manifest.id}`;
 
-          server.log.info({
+          platform.logger.info({
             plugin: `${manifest.id}@${manifest.version}`,
             configBasePath: config.basePath,
             manifestBasePath: manifest.rest?.basePath,
@@ -206,7 +206,7 @@ export async function registerPluginRoutes(
           }
 
           mountMetrics.recordSuccess(manifest.id, routesCount, duration);
-          server.log.info({
+          platform.logger.info({
             plugin: `${manifest.id}@${manifest.version}`,
             durationMs: Number(duration.toFixed(2)),
           }, 'Successfully mounted plugin routes');
@@ -218,10 +218,11 @@ export async function registerPluginRoutes(
           };
         } catch (error) {
           mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
-          server.log.error({
-            plugin: manifest.id,
-            err: error instanceof Error ? error : new Error(String(error)),
-          }, 'Failed to mount plugin routes');
+          platform.logger.error(
+            'Failed to mount plugin routes',
+            error instanceof Error ? error : new Error(String(error)),
+            { plugin: manifest.id }
+          );
           return {
             success: false,
             pluginId: manifest.id,
@@ -279,7 +280,7 @@ export async function registerPluginRoutes(
     }
 
     // Log summary
-    server.log.info({
+    platform.logger.info({
       total: mountTasks.length,
       succeeded: succeeded.length,
       failed: failed.length,
@@ -287,9 +288,10 @@ export async function registerPluginRoutes(
       errors,
     }, 'Parallel plugin route mounting completed');
   } catch (error) {
-    server.log.error({
-      err: error instanceof Error ? error : new Error(String(error)),
-    }, 'Plugin discovery failed');
+    platform.logger.error(
+      'Plugin discovery failed',
+      error instanceof Error ? error : new Error(String(error))
+    );
     stats.errors += 1;
     if (readiness) {
       readiness.pluginRoutesCount = stats.mountedRoutes;
@@ -302,7 +304,7 @@ export async function registerPluginRoutes(
         error: `rest_discovery_failed ${shortErrorMessage(error)}`,
       });
     }
-    metricsCollector.completePluginMount(server.log);
+    metricsCollector.completePluginMount(platform.logger as any);
     return;
   }
 
@@ -317,7 +319,7 @@ export async function registerPluginRoutes(
     );
   }
 
-  metricsCollector.completePluginMount(server.log);
+  metricsCollector.completePluginMount(platform.logger as any);
 }
 
 /**
@@ -364,9 +366,10 @@ export async function registerPluginRegistry(
         apiBasePath: basePath,
       };
     } catch (error) {
-      server.log.error({
-        err: error instanceof Error ? error : new Error(String(error)),
-      }, 'Failed to get plugin registry');
+      platform.logger.error(
+        'Failed to get plugin registry',
+        error instanceof Error ? error : new Error(String(error))
+      );
       reply.code(500).send({
         error: 'Failed to load plugin registry',
         message: error instanceof Error ? error.message : String(error),
@@ -394,7 +397,7 @@ export async function registerPluginRegistry(
       reply.type('application/json');
       return studioRegistry;
     } catch (error) {
-      server.log.error({
+      platform.logger.error({
         err: error instanceof Error ? error : new Error(String(error)),
       }, 'Failed to generate studio registry');
       reply.code(500).send({
@@ -455,7 +458,7 @@ Please answer the question based on the plugin manifest above.`;
         usage: response.usage,
       };
     } catch (error) {
-      server.log.error({
+      platform.logger.error({
         err: error instanceof Error ? error : new Error(String(error)),
       }, 'Failed to get AI answer about plugin');
       reply.code(500).send({

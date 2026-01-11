@@ -105,7 +105,7 @@ export async function registerAnalyticsRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to fetch analytics events');
+        platform.logger.error('Failed to fetch analytics events', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -139,7 +139,17 @@ export async function registerAnalyticsRoutes(
 
         fastify.log.debug('Fetching analytics stats');
 
-        const stats: EventsStats = await analytics.getStats();
+        // Cache stats for 60 seconds to avoid reprocessing 50k+ events on every request
+        const cacheKey = 'analytics:stats';
+        let stats = await platform.cache.get<EventsStats>(cacheKey);
+
+        if (!stats) {
+          fastify.log.debug('Cache miss, fetching stats from adapter');
+          stats = await analytics.getStats();
+          await platform.cache.set(cacheKey, stats, 60 * 1000); // 60 second TTL
+        } else {
+          fastify.log.debug('Cache hit, returning cached stats');
+        }
 
         fastify.log.debug(
           {
@@ -157,7 +167,7 @@ export async function registerAnalyticsRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to fetch analytics stats');
+        platform.logger.error('Failed to fetch analytics stats', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -220,7 +230,7 @@ export async function registerAnalyticsRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to fetch analytics buffer status');
+        platform.logger.error('Failed to fetch analytics buffer status', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -286,7 +296,7 @@ export async function registerAnalyticsRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error({ err: error }, 'Failed to fetch analytics DLQ status');
+        platform.logger.error('Failed to fetch analytics DLQ status', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,

@@ -6,6 +6,8 @@
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, RedisStatus } from '@kb-labs/cli-api';
+import type { ISQLDatabase } from '@kb-labs/core-platform/adapters';
+import { platform } from '@kb-labs/core-runtime';
 import { EventHub } from '../events/hub';
 import { registerEventRoutes } from './events';
 import { registerHealthRoutes } from './health';
@@ -80,11 +82,15 @@ export async function registerRoutes(
   const handleRedisUpdate = (status: RedisStatus) => {
     metricsCollector.recordRedisStatus(status);
     if (!readiness.redisEnabled && status.enabled) {
-      server.log.info({ redis: status }, 'Redis support enabled');
+      platform.logger.info('Redis support enabled', { redis: status });
     }
     if (readiness.redisConnected !== status.healthy) {
-      const level = status.healthy ? 'info' : 'warn';
-      server.log[level]({ redis: status }, 'Redis health status changed');
+      const message = 'Redis health status changed';
+      if (status.healthy) {
+        platform.logger.info(message, { redis: status });
+      } else {
+        platform.logger.warn(message, { redis: status });
+      }
     }
     const prevStates = readiness.redisStates;
     if (
@@ -92,7 +98,7 @@ export async function registerRoutes(
       prevStates.subscriber !== (status.roles.subscriber ?? null) ||
       prevStates.cache !== (status.roles.cache ?? null)
     ) {
-      server.log.info({ redis: status.roles }, 'Redis role state changed');
+      platform.logger.info('Redis role state changed', { redis: status.roles });
     }
   };
 
@@ -132,7 +138,9 @@ export async function registerRoutes(
         previousChecksum: snapshot.previousChecksum ?? null,
       });
     } catch (error) {
-      server.log.warn({ err: error }, 'Failed to publish registry snapshot event');
+      platform.logger.warn('Failed to publish registry snapshot event', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
 
     try {
@@ -159,7 +167,9 @@ export async function registerRoutes(
         redisStates: readiness.redisStates,
       });
     } catch (error) {
-      server.log.warn({ err: error }, 'Failed to publish health event');
+      platform.logger.warn('Failed to publish health event', {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   };
 
@@ -174,14 +184,14 @@ export async function registerRoutes(
   };
 
   // Initial mount - wait for completion before server starts listening
-  server.log.info('Starting initial plugin route mounting');
+  platform.logger.info('Starting initial plugin route mounting');
   try {
     await runMount();
-    server.log.info('Plugin route mounting completed');
+    platform.logger.info('Plugin route mounting completed');
   } catch (error) {
-    server.log.error(
-      { err: error },
-      'Plugin route mounting failed'
+    platform.logger.error(
+      'Plugin route mounting failed',
+      error instanceof Error ? error : new Error(String(error))
     );
   }
 
@@ -195,7 +205,7 @@ export async function registerRoutes(
                        (server.server && (server.server as any).listening);
     
     if (isListening) {
-      server.log.warn(
+      platform.logger.warn(
         'Cannot remount plugin routes: server is already listening. Restart required.'
       );
       return;
@@ -210,19 +220,19 @@ export async function registerRoutes(
                                (server.server && (server.server as any).listening);
         
         if (stillListening) {
-          server.log.warn(
+          platform.logger.warn(
             'Cannot remount plugin routes: server started listening during remount. Restart required.'
           );
           return;
         }
-        server.log.info('Registry change detected, remounting plugin routes');
+        platform.logger.info('Registry change detected, remounting plugin routes');
         await runMount();
       })
       .then(() => {
-        server.log.info('Plugin route remount completed');
+        platform.logger.info('Plugin route remount completed');
       })
       .catch(error => {
-        server.log.error(
+        platform.logger.error(
           { err: error },
           'Plugin route remount failed'
         );
@@ -248,42 +258,83 @@ export async function registerRoutes(
   await registerWorkflowRoutes(server, config, cliApi);
 
   // Register workflow management endpoints (new endpoints for CRUD and scheduling)
-  const platform = getPlatformServices();
-  await registerWorkflowManagementRoutes(server, config, cliApi, platform);
+  const platformServices = getPlatformServices();
+  await registerWorkflowManagementRoutes(server, config, cliApi, platformServices);
 
   await registerCacheRoutes(server, config, cliApi);
 
   // Initialize historical metrics collector
   const historicalCollector = new HistoricalMetricsCollector(
-    platform.cache,
+    platformServices.cache,
     {
       intervalMs: 5000, // Collect every 5 seconds
       debug: process.env.NODE_ENV !== 'production',
     },
-    server.log
+    platformServices.logger as any
   );
 
   // Start background collection
   historicalCollector.start();
-  server.log.info('Historical metrics collector started');
+  platform.logger.info('Historical metrics collector started');
 
   // Stop collector on server close
   server.addHook('onClose', async () => {
     historicalCollector.stop();
-    server.log.info('Historical metrics collector stopped');
+    platform.logger.info('Historical metrics collector stopped');
   });
 
-  // Initialize incident storage
-  const incidentStorage = new IncidentStorage(
-    platform.cache,
-    {
-      ttlMs: 30 * 24 * 60 * 60 * 1000, // 30 days
-      maxIncidents: 1000,
-      debug: process.env.NODE_ENV !== 'production',
-    },
-    server.log
-  );
-  server.log.info('Incident storage initialized');
+  // Initialize incident storage (uses logs database)
+  let incidentStorage: IncidentStorage;
+  try {
+    // Get database adapter from platform (same DB as logs)
+    const db = platform.getAdapter<ISQLDatabase>('db');
+
+    if (!db) {
+      throw new Error('Database adapter not configured. Please configure db adapter in kb.config.json');
+    }
+
+    // Initialize incidents schema
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = dirname(__filename);
+    const schemaPath = join(__dirname, '..', 'services', 'incident-schema.sql');
+    const schema = readFileSync(schemaPath, 'utf-8');
+
+    // Execute schema
+    if ('exec' in db && typeof (db as any).exec === 'function') {
+      await (db as any).exec(schema);
+    } else {
+      // Fallback: execute statements one by one
+      const statements = schema
+        .split(';')
+        .map(s => s.trim())
+        .filter(s => s.length > 0 && !s.startsWith('--'));
+
+      for (const statement of statements) {
+        if (statement) {
+          await db.query(statement);
+        }
+      }
+    }
+
+    platform.logger.info('Incidents schema initialized');
+
+    // Create incident storage
+    incidentStorage = new IncidentStorage(
+      db,
+      { debug: process.env.NODE_ENV !== 'production' },
+      platformServices.logger as any
+    );
+
+    platform.logger.info('Incident storage initialized');
+  } catch (err) {
+    const error = err instanceof Error ? err : new Error(String(err));
+    platform.logger.error('Failed to initialize incident storage', error);
+    throw error;
+  }
 
   // Initialize incident detector for auto-detection
   const incidentDetector = new IncidentDetector(
@@ -303,20 +354,20 @@ export async function registerRoutes(
         pluginErrorRateCritical: 25,
       },
     },
-    server.log
+    platformServices.logger as any
   );
 
   // Start incident detector
   incidentDetector.start();
-  server.log.info('Incident detector started');
+  platform.logger.info('Incident detector started');
 
   // Stop detector on server close
   server.addHook('onClose', async () => {
     incidentDetector.stop();
-    server.log.info('Incident detector stopped');
+    platform.logger.info('Incident detector stopped');
   });
 
-  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, incidentStorage, platform);
+  await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, incidentStorage, platformServices);
 
   await registerAnalyticsRoutes(server, config);
 
