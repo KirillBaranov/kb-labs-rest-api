@@ -9,10 +9,12 @@ import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
+import { hostname } from 'node:os';
 import type { HistoricalMetricsCollector } from '../services/historical-metrics';
 import type { IncidentStorage } from '../services/incident-storage';
 import { IncidentAnalyzer } from '../services/incident-analyzer';
 import { platform } from '@kb-labs/core-runtime';
+import type { SystemMetrics } from '../services/system-metrics-collector';
 
 const execAsync = promisify(exec);
 
@@ -38,6 +40,7 @@ export async function registerObservabilityRoutes(
   const basePath = normalizeBasePath(config.basePath);
   const stateBrokerPaths = resolvePaths(basePath, '/observability/state-broker');
   const devkitPaths = resolvePaths(basePath, '/observability/devkit');
+  const systemMetricsPaths = resolvePaths(basePath, '/observability/system-metrics');
   const metricsHistoryPaths = resolvePaths(basePath, '/observability/metrics/history');
   const metricsHeatmapPaths = resolvePaths(basePath, '/observability/metrics/heatmap');
   const incidentsListPaths = resolvePaths(basePath, '/observability/incidents');
@@ -256,6 +259,128 @@ export async function registerObservabilityRoutes(
           error: {
             code: 'DEVKIT_ERROR',
             message: error instanceof Error ? error.message : 'Failed to execute DevKit health check',
+          },
+        });
+      }
+    });
+  }
+
+  // GET /api/v1/observability/system-metrics
+  // Returns system resource metrics (CPU, memory, uptime, load) from all REST API instances
+  for (const path of systemMetricsPaths) {
+    fastify.get(path, async (_request, reply) => {
+      try {
+        if (!platform?.cache) {
+          return reply.code(503).send({
+            ok: false,
+            error: {
+              code: 'PLATFORM_CACHE_UNAVAILABLE',
+              message: 'Platform cache is not available',
+            },
+          });
+        }
+
+        fastify.log.debug('Fetching system metrics from all instances');
+
+        // Get all system-metrics:* keys from platform.cache
+        const allMetrics: SystemMetrics[] = [];
+
+        // Try to scan for all system-metrics keys
+        // Note: platform.cache may not have scan(), so we'll handle both cases
+        try {
+          // Try to use scan if available (Redis adapter)
+          if ('scan' in platform.cache && typeof (platform.cache as any).scan === 'function') {
+            const keys = await (platform.cache as any).scan('system-metrics:*');
+
+            for (const key of keys) {
+              const metrics = await platform.cache.get<SystemMetrics>(key);
+              if (metrics) {
+                allMetrics.push(metrics);
+              }
+            }
+          } else {
+            // Fallback: InMemory adapter doesn't have scan, but we can try common instance IDs
+            // This is a limitation - we won't see all instances unless we track them separately
+            // For now, we'll just try to get the current instance's metrics
+            const currentInstanceId = hostname();
+            const metrics = await platform.cache.get<SystemMetrics>(`system-metrics:${currentInstanceId}`);
+
+            if (metrics) {
+              allMetrics.push(metrics);
+            }
+
+            fastify.log.debug('Platform cache does not support scan(), showing current instance only');
+          }
+        } catch (scanError) {
+          fastify.log.warn({ err: scanError }, 'Failed to scan platform.cache for system metrics');
+
+          // Fallback: try current instance
+          const currentInstanceId = hostname();
+          const metrics = await platform.cache.get<SystemMetrics>(`system-metrics:${currentInstanceId}`);
+
+          if (metrics) {
+            allMetrics.push(metrics);
+          }
+        }
+
+        if (allMetrics.length === 0) {
+          return reply.code(404).send({
+            ok: false,
+            error: {
+              code: 'NO_METRICS_FOUND',
+              message: 'No system metrics found. Metrics collector may not be running.',
+            },
+          });
+        }
+
+        // Sort by timestamp (newest first)
+        allMetrics.sort((a, b) => b.timestamp - a.timestamp);
+
+        // Calculate aggregated metrics
+        const now = Date.now();
+        const avgCpu = allMetrics.reduce((sum, m) => sum + m.cpu.percentage, 0) / allMetrics.length;
+        const avgMemory = allMetrics.reduce((sum, m) => sum + m.memory.rssPercentage, 0) / allMetrics.length;
+        const avgHeap = allMetrics.reduce((sum, m) => sum + m.memory.heapPercentage, 0) / allMetrics.length;
+
+        // Categorize instances by health status based on age
+        const activeInstances = allMetrics.filter(m => (now - m.timestamp) < 30000); // Active if updated in last 30s
+        const staleInstances = allMetrics.filter(m => (now - m.timestamp) >= 30000 && (now - m.timestamp) < 60000); // Stale if 30-60s old
+        const deadInstances = allMetrics.filter(m => (now - m.timestamp) >= 60000); // Dead if >60s old
+
+        fastify.log.debug({
+          totalInstances: allMetrics.length,
+          activeInstances: activeInstances.length,
+          staleInstances: staleInstances.length,
+          deadInstances: deadInstances.length,
+        }, 'System metrics retrieved');
+
+        return {
+          ok: true,
+          data: {
+            instances: allMetrics,
+            summary: {
+              totalInstances: allMetrics.length,
+              activeInstances: activeInstances.length,
+              staleInstances: staleInstances.length,
+              deadInstances: deadInstances.length,
+              avgCpu: parseFloat(avgCpu.toFixed(2)),
+              avgMemory: parseFloat(avgMemory.toFixed(2)),
+              avgHeap: parseFloat(avgHeap.toFixed(2)),
+            },
+          },
+          meta: {
+            source: 'platform-cache',
+            timestamp: now,
+          },
+        };
+      } catch (error) {
+        platform.logger.error('Failed to fetch system metrics', error instanceof Error ? error : new Error(String(error)));
+
+        return reply.code(500).send({
+          ok: false,
+          error: {
+            code: 'SYSTEM_METRICS_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to fetch system metrics',
           },
         });
       }
@@ -1255,12 +1380,35 @@ Be concise but thorough. Use markdown formatting.`;
         platform.logger.info(`Bulk test - success ${i + 1}/${successCount}`);
       }
 
-      // Generate error requests
+      // Generate error requests with varied endpoints
+      const testEndpoints = [
+        'POST /api/v1/test/endpoint-a',
+        'GET /api/v1/test/endpoint-b',
+        'PUT /api/v1/test/endpoint-c',
+        'DELETE /api/v1/test/endpoint-d',
+        'POST /api/v1/test/endpoint-e',
+      ];
+
       for (let i = 0; i < errorCount; i++) {
-        platform.logger.error(`Bulk test - error ${i + 1}/${errorCount}`, {
+        const endpoint = testEndpoints[i % testEndpoints.length];
+        const errorTypes = [
+          'Connection timeout',
+          'Validation failed',
+          'Database query error',
+          'Authentication failed',
+          'Rate limit exceeded',
+        ];
+        const errorType = errorTypes[i % errorTypes.length];
+
+        platform.logger.error(`${errorType}: ${endpoint}`, {
           testMode: true,
           bulkTest: true,
           errorIndex: i,
+          endpoint, // Add endpoint for grouping
+          err: {
+            message: errorType,
+            stack: `Error: ${errorType}\n  at testHandler (test.ts:${100 + i})\n  at route (routes.ts:${200 + i})`,
+          },
         });
       }
 
