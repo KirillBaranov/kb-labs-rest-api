@@ -70,7 +70,13 @@ export async function registerPlugins(
   // Add Vary: Origin header for CORS caching
   server.addHook('onSend', async (request, reply) => {
     if (corsProfile !== 'prod') {
-      reply.header('Vary', 'Origin');
+      try {
+        if (!reply.raw.headersSent) {
+          reply.header('Vary', 'Origin');
+        }
+      } catch (err) {
+        // Headers already sent, ignore
+      }
     }
   });
 

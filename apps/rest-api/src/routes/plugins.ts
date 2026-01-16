@@ -9,6 +9,7 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
+import { validateManifest } from '@kb-labs/plugin-contracts';
 import { mountRoutes } from '@kb-labs/plugin-execution/http';
 import { combineManifestsToRegistry } from '@kb-labs/rest-api-core';
 import { platform } from '@kb-labs/core-runtime';
@@ -337,7 +338,7 @@ export async function registerPluginRegistry(
     try {
       const snapshot = cliApi.snapshot();
 
-      // Get build timestamps by checking dist/ mtime for each plugin
+      // Get build timestamps and validate manifests
       const manifestsWithTimestamps = await Promise.all(
         snapshot.manifests.map(async (entry) => {
           let buildTimestamp: string | undefined;
@@ -349,6 +350,9 @@ export async function registerPluginRegistry(
             // dist/ doesn't exist or not accessible, skip
           }
 
+          // Validate manifest structure
+          const validation = validateManifest(entry.manifest);
+
           return {
             pluginId: entry.pluginId,
             manifest: entry.manifest,
@@ -356,6 +360,10 @@ export async function registerPluginRegistry(
             source: entry.source,
             discoveredAt: snapshot.generatedAt,
             buildTimestamp,
+            validation: {
+              valid: validation.valid,
+              errors: validation.errors,
+            },
           };
         })
       );
@@ -402,6 +410,88 @@ export async function registerPluginRegistry(
       }, 'Failed to generate studio registry');
       reply.code(500).send({
         error: 'Failed to generate studio registry',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Plugin registry health endpoint
+  server.get(`${basePath}/plugins/health`, async (_request, reply) => {
+    try {
+      const snapshot = cliApi.snapshot();
+
+      // Collect validation errors from all manifests
+      const validationIssues: Array<{ pluginId: string; errors: string[] }> = [];
+      for (const entry of snapshot.manifests) {
+        const validation = validateManifest(entry.manifest);
+        if (!validation.valid) {
+          validationIssues.push({
+            pluginId: entry.pluginId,
+            errors: validation.errors,
+          });
+        }
+      }
+
+      // Get discovery errors (plugins that failed to load)
+      const discoveryErrors = snapshot.errors || [];
+
+      // Determine why registry is partial
+      const partialReasons: string[] = [];
+      if (snapshot.corrupted) {
+        partialReasons.push('snapshot_corrupted');
+      }
+      if (discoveryErrors.length > 0) {
+        partialReasons.push('discovery_errors');
+      }
+      // If partial but no clear reason, it's likely initialization
+      if (snapshot.partial && partialReasons.length === 0) {
+        partialReasons.push('initialization_incomplete');
+      }
+
+      reply.type('application/json');
+      return {
+        healthy: !snapshot.partial && !snapshot.stale && validationIssues.length === 0 && discoveryErrors.length === 0,
+        snapshot: {
+          partial: snapshot.partial,
+          stale: snapshot.stale,
+          corrupted: snapshot.corrupted,
+          rev: snapshot.rev,
+          generatedAt: snapshot.generatedAt,
+          totalManifests: snapshot.manifests.length,
+          partialReasons,
+        },
+        discovery: {
+          totalErrors: discoveryErrors.length,
+          errors: discoveryErrors.map((err) => ({
+            pluginPath: err.pluginPath,
+            pluginId: err.pluginId,
+            error: err.error,
+            code: err.code,
+          })),
+        },
+        validation: {
+          totalIssues: validationIssues.length,
+          issues: validationIssues,
+        },
+        message:
+          discoveryErrors.length > 0
+            ? `Registry is partial - ${discoveryErrors.length} plugin(s) failed to load. Check discovery.errors for details.`
+            : snapshot.partial && partialReasons.includes('initialization_incomplete')
+              ? 'Registry is partial - initialization incomplete. Try refreshing or wait for discovery to complete.'
+              : snapshot.partial
+                ? `Registry is partial - reasons: ${partialReasons.join(', ')}`
+                : snapshot.stale
+                  ? 'Registry is stale - plugin discovery may be outdated.'
+                  : validationIssues.length > 0
+                    ? `${validationIssues.length} plugin(s) have validation errors.`
+                    : 'All plugins are healthy.',
+      };
+    } catch (error) {
+      platform.logger.error({
+        err: error instanceof Error ? error : new Error(String(error)),
+      }, 'Failed to get plugin health');
+      reply.code(500).send({
+        error: 'Failed to get plugin health',
         message: error instanceof Error ? error.message : String(error),
       });
     }
