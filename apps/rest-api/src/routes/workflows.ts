@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { RestApiConfig } from '@kb-labs/rest-api-core'
-import type { CliAPI, WorkflowLogEvent } from '@kb-labs/cli-api'
+import type { IWorkflowEngine, IJobScheduler } from '@kb-labs/core-platform'
+import type { WorkflowsAPI, JobsAPI } from '@kb-labs/plugin-contracts'
+import { createWorkflowsAPI } from '@kb-labs/plugin-runtime'
+import { createJobsAPI } from '@kb-labs/plugin-runtime'
 import { WorkflowSpecSchema, type WorkflowSpec } from '@kb-labs/workflow-contracts'
 import { z } from 'zod'
 import { normalizeBasePath } from '../utils/path-helpers'
@@ -64,9 +67,44 @@ const eventsQuerySchema = z
 export async function registerWorkflowRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
-  cliApi: CliAPI,
+  workflowEngine: IWorkflowEngine | null,
+  jobScheduler: IJobScheduler | null,
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath)
+
+  // Helper to extract tenantId from headers
+  const getTenantId = (headers: Record<string, unknown>): string | undefined => {
+    const tenantHeader = headers['x-tenant-id'];
+    if (!tenantHeader) return undefined;
+    return Array.isArray(tenantHeader) ? tenantHeader[0] : String(tenantHeader);
+  };
+
+  // Create WorkflowsAPI and JobsAPI with full permissions for REST API
+  const createWorkflowsAPIForRequest = (request: FastifyRequest): WorkflowsAPI | null => {
+    if (!workflowEngine) return null;
+    return createWorkflowsAPI({
+      tenantId: getTenantId(request.headers),
+      engine: workflowEngine,
+      permissions: {
+        platform: {
+          workflows: true, // REST API has full workflow access
+        },
+      },
+    });
+  };
+
+  const createJobsAPIForRequest = (request: FastifyRequest): JobsAPI | null => {
+    if (!jobScheduler) return null;
+    return createJobsAPI({
+      tenantId: getTenantId(request.headers),
+      scheduler: jobScheduler,
+      permissions: {
+        platform: {
+          jobs: true, // REST API has full jobs access
+        },
+      },
+    });
+  };
 
   server.route({
     method: 'POST',
@@ -76,6 +114,11 @@ export async function registerWorkflowRoutes(
       response: responseSchemas,
     },
     handler: async (request, reply) => {
+      const workflowsAPI = createWorkflowsAPIForRequest(request);
+      if (!workflowsAPI) {
+        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
+      }
+
       const body = runRequestSchema.parse(request.body ?? {})
 
       if (body.specRef) {
@@ -87,22 +130,21 @@ export async function registerWorkflowRoutes(
         throw createError(400, 'WF_SPEC_MISSING', 'inlineSpec is required')
       }
 
-      const run = await cliApi.runWorkflow({
-        spec,
-        idempotencyKey: body.idempotency ?? resolveIdempotencyFromHeaders(request.headers),
-        concurrencyGroup: body.concurrency?.group,
-        metadata: {
+      // Use the new WorkflowsAPI
+      const runId = await workflowsAPI.run(spec.id, {
+        ...body.metadata,
+      }, {
+        priority: spec.priority,
+        timeout: spec.timeout,
+        tags: {
           source: 'rest',
+          actor: resolveActor(request.headers),
           ...body.metadata,
         },
-        trigger: {
-          type: 'manual',
-          actor: resolveActor(request.headers),
-          payload: body.metadata ?? {},
-        },
-      })
+        idempotencyKey: body.idempotency ?? resolveIdempotencyFromHeaders(request.headers),
+      });
 
-      reply.code(202).send({ run })
+      return reply.code(202).send({ runId })
     },
   })
 
@@ -113,12 +155,17 @@ export async function registerWorkflowRoutes(
       response: responseSchemas,
     },
     handler: async (request, reply) => {
+      const workflowsAPI = createWorkflowsAPIForRequest(request);
+      if (!workflowsAPI) {
+        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
+      }
+
       const query = listQuerySchema.parse(request.query ?? {})
-      const result = await cliApi.listWorkflowRuns({
-        status: query.status,
+      const runs = await workflowsAPI.list({
+        status: query.status as any,
         limit: query.limit,
       })
-      reply.send(result)
+      return reply.send({ runs })
     },
   })
 
@@ -129,12 +176,17 @@ export async function registerWorkflowRoutes(
       response: responseSchemas,
     },
     handler: async (request, reply) => {
+      const workflowsAPI = createWorkflowsAPIForRequest(request);
+      if (!workflowsAPI) {
+        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
+      }
+
       const runId = getRunId(request.params)
-      const run = await cliApi.getWorkflowRun(runId)
+      const run = await workflowsAPI.status(runId)
       if (!run) {
         throw createError(404, 'WF_RUN_NOT_FOUND', `Workflow run ${runId} not found`)
       }
-      reply.send({ run })
+      return reply.send({ run })
     },
   })
 
@@ -145,59 +197,36 @@ export async function registerWorkflowRoutes(
       response: responseSchemas,
     },
     handler: async (request, reply) => {
+      const workflowsAPI = createWorkflowsAPIForRequest(request);
+      if (!workflowsAPI) {
+        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
+      }
+
       const runId = getRunId(request.params)
-      const run = await cliApi.cancelWorkflowRun(runId)
+
+      // Check if run exists before cancelling
+      const run = await workflowsAPI.status(runId)
       if (!run) {
         throw createError(404, 'WF_RUN_NOT_FOUND', `Workflow run ${runId} not found`)
       }
-      reply.send({ run })
+
+      // Cancel the workflow
+      await workflowsAPI.cancel(runId)
+
+      // Get updated status
+      const updatedRun = await workflowsAPI.status(runId)
+      return reply.send({ run: updatedRun })
     },
   })
+
+  // TODO: Implement logs/events routes using WorkflowsAPI
+  // These routes require streaming support which is not yet implemented in WorkflowsAPI
 
   server.route({
     method: 'GET',
     url: `${basePath}/workflows/runs/:runId/logs`,
     handler: async (request, reply) => {
-      const runId = getRunId(request.params)
-      const query = logsQuerySchema.parse(request.query ?? {})
-
-      const run = await cliApi.getWorkflowRun(runId)
-      if (!run) {
-        throw createError(404, 'WF_RUN_NOT_FOUND', `Workflow run ${runId} not found`)
-      }
-
-      reply.raw.setHeader('Content-Type', 'text/event-stream')
-      reply.raw.setHeader('Cache-Control', 'no-cache, no-transform')
-      reply.raw.setHeader('Connection', 'keep-alive')
-      reply.raw.flushHeaders?.()
-      reply.raw.write(': connected\n\n')
-
-      const controller = new AbortController()
-      const sendEvent = (event: WorkflowLogEvent) => {
-        reply.raw.write(`event: workflow.log\n`)
-        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`)
-      }
-
-      request.raw.on('close', () => {
-        controller.abort()
-        reply.raw.end()
-      })
-
-      try {
-        await cliApi.streamWorkflowLogs({
-          runId,
-          follow: Boolean(query.follow),
-          idleTimeoutMs: query.idleTimeoutMs,
-          signal: controller.signal,
-          onEvent: sendEvent,
-        })
-      } catch (error) {
-        if ((request as any).kbLogger) {
-          (request as any).kbLogger.warn('Workflow log streaming failed', { err: error });
-        }
-      } finally {
-        reply.raw.end()
-      }
+      throw createError(501, 'NOT_IMPLEMENTED', 'Workflow logs streaming not yet implemented in new API')
     },
   })
 
@@ -205,58 +234,7 @@ export async function registerWorkflowRoutes(
     method: 'GET',
     url: `${basePath}/workflows/runs/:runId/events`,
     handler: async (request, reply) => {
-      const runId = getRunId(request.params)
-      const query = eventsQuerySchema.parse(request.query ?? {})
-
-      const wantsStream =
-        Boolean(query.follow) ||
-        (typeof request.headers.accept === 'string' &&
-          request.headers.accept.includes('text/event-stream'))
-
-      if (!wantsStream) {
-        const result = await cliApi.listWorkflowEvents({
-          runId,
-          cursor: query.cursor ?? null,
-          limit: query.limit,
-        })
-        reply.send(result)
-        return
-      }
-
-      reply.raw.setHeader('Content-Type', 'text/event-stream')
-      reply.raw.setHeader('Cache-Control', 'no-cache, no-transform')
-      reply.raw.setHeader('Connection', 'keep-alive')
-      reply.raw.flushHeaders?.()
-      reply.raw.write(': connected\n\n')
-
-      const controller = new AbortController()
-
-      const handleEvent = (event: unknown) => {
-        reply.raw.write('event: workflow.event\n')
-        reply.raw.write(`data: ${JSON.stringify(event)}\n\n`)
-      }
-
-      request.raw.on('close', () => {
-        controller.abort()
-        reply.raw.end()
-      })
-
-      try {
-        await cliApi.streamWorkflowEvents({
-          runId,
-          cursor: query.cursor ?? null,
-          follow: true,
-          pollIntervalMs: query.pollIntervalMs,
-          signal: controller.signal,
-          onEvent: handleEvent,
-        })
-      } catch (error) {
-        if ((request as any).kbLogger) {
-          (request as any).kbLogger.warn('Workflow event streaming failed', { err: error });
-        }
-      } finally {
-        reply.raw.end()
-      }
+      throw createError(501, 'NOT_IMPLEMENTED', 'Workflow events streaming not yet implemented in new API')
     },
   })
 }

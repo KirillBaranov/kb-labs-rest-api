@@ -7,12 +7,15 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
+import type { IWorkflowEngine, ICronManager } from '@kb-labs/core-platform';
 import { WorkflowSpecSchema, type WorkflowSpec } from '@kb-labs/workflow-contracts';
 import {
   WorkflowService,
   WorkflowRepository,
   ManifestScanner,
+  WorkflowScheduleManager,
   type WorkflowRuntime,
+  type WorkflowExecutor,
 } from '@kb-labs/workflow-engine';
 import { z } from 'zod';
 import { normalizeBasePath } from '../utils/path-helpers';
@@ -80,13 +83,47 @@ export async function registerWorkflowManagementRoutes(
   config: RestApiConfig,
   cliApi: CliAPI,
   platform: PlatformServices,
+  workflowEngine: IWorkflowEngine | null,
+  cronManager: ICronManager | null,
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath);
 
   // Initialize services
-  const repository = new WorkflowRepository(platform, '.kb/workflows');
-  const scanner = new ManifestScanner(cliApi, platform);
-  const workflowService = new WorkflowService(scanner, repository, platform);
+  const workflowService = new WorkflowService({
+    cliApi,
+    platform,
+    workflowStorageDir: '.kb/workflows',
+  });
+
+  // Initialize WorkflowScheduleManager to register jobs from manifests
+  if (cronManager && workflowEngine) {
+    const executor: WorkflowExecutor = {
+      async execute(request) {
+        const run = await workflowEngine.execute(
+          request.workflowId,
+          request.input ?? {},
+          {
+            tags: { trigger: request.trigger },
+          }
+        );
+        return { runId: run.id };
+      },
+    };
+
+    const scheduleManager = new WorkflowScheduleManager({
+      cronManager,
+      workflowService,
+      executor,
+      platform,
+    });
+
+    // Register all scheduled workflows/jobs from manifests
+    await scheduleManager.registerAll();
+
+    platform.logger?.info('WorkflowScheduleManager initialized and jobs registered');
+  } else {
+    platform.logger?.warn('WorkflowScheduleManager not initialized: cronManager or workflowEngine unavailable');
+  }
 
   // ========================================================================
   // Workflow CRUD

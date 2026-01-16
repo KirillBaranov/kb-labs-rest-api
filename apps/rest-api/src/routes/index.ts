@@ -16,6 +16,7 @@ import { registerMetricsRoutes } from './metrics';
 import { registerPluginRoutes, registerPluginRegistry } from './plugins';
 import { registerWorkflowRoutes } from './workflows';
 import { registerWorkflowManagementRoutes } from './workflow-management';
+import { registerJobsRoutes } from './jobs';
 import { registerCacheRoutes } from './cache';
 import { registerObservabilityRoutes } from './observability';
 import { registerAnalyticsRoutes } from './analytics';
@@ -255,11 +256,26 @@ export async function registerRoutes(
 
   await registerPluginRegistry(server, config, cliApi);
 
-  await registerWorkflowRoutes(server, config, cliApi);
+  // Get workflow engine, job scheduler, and cron manager from platform
+  const workflowEngine = (platform as any).workflows ?? null;
+  const jobScheduler = (platform as any).jobs ?? null;
+  const cronManager = (platform as any).cron ?? null;
+
+  await registerWorkflowRoutes(server, config, workflowEngine, jobScheduler);
 
   // Register workflow management endpoints (new endpoints for CRUD and scheduling)
   const platformServices = getPlatformServices();
-  await registerWorkflowManagementRoutes(server, config, cliApi, platformServices);
+  await registerWorkflowManagementRoutes(
+    server,
+    config,
+    cliApi,
+    platformServices,
+    workflowEngine,
+    cronManager
+  );
+
+  // Register jobs management endpoints (scheduled jobs)
+  await registerJobsRoutes(server, config, cronManager);
 
   await registerCacheRoutes(server, config, cliApi);
 
