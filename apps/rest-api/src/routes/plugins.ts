@@ -11,6 +11,7 @@ import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { validateManifest } from '@kb-labs/plugin-contracts';
 import { mountRoutes } from '@kb-labs/plugin-execution/http';
+import { mountWebSocketChannels } from '@kb-labs/plugin-execution';
 import { combineManifestsToRegistry } from '@kb-labs/rest-api-core';
 import { platform } from '@kb-labs/core-runtime';
 import * as path from 'node:path';
@@ -48,6 +49,7 @@ export async function registerPluginRoutes(
   // Stats will be computed from mount results to avoid race conditions in parallel execution
   const stats = {
     mountedRoutes: 0,
+    mountedChannels: 0,
     errors: 0,
   };
 
@@ -94,9 +96,12 @@ export async function registerPluginRoutes(
     // Use platform's unified ExecutionBackend (initialized in bootstrap.ts)
     const backend = platform.executionBackend;
 
-    // Prepare mount tasks for parallel execution
+    // Prepare mount tasks for parallel execution (REST + WebSocket)
     const mountTasks = manifests
-      .filter(entry => entry.manifest.rest?.routes && entry.manifest.rest.routes.length > 0)
+      .filter(entry =>
+        (entry.manifest.rest?.routes && entry.manifest.rest.routes.length > 0) ||
+        (entry.manifest.ws?.channels && entry.manifest.ws.channels.length > 0)
+      )
       .map(async (entry) => {
         const { manifest, pluginRoot } = entry;
 
@@ -171,9 +176,24 @@ export async function registerPluginRoutes(
 
         try {
           const start = performance.now();
-          const pluginBasePath = manifest.rest?.basePath
-            ? manifest.rest.basePath.replace(/^\/v1/, config.basePath)
-            : `${config.basePath}/plugins/${manifest.id}`;
+          // Handle both /v1/plugins/xxx and /plugins/xxx formats
+          // Ensure basePath doesn't already contain /api prefix to avoid duplication
+          let pluginBasePath: string;
+          if (manifest.rest?.basePath) {
+            if (manifest.rest.basePath.startsWith('/api/')) {
+              // Already has /api prefix, use as-is
+              pluginBasePath = manifest.rest.basePath;
+            } else if (manifest.rest.basePath.startsWith('/v1/')) {
+              // Old format: /v1/plugins/xxx → /api/v1/plugins/xxx
+              pluginBasePath = manifest.rest.basePath.replace(/^\/v1/, config.basePath);
+            } else {
+              // New format: /plugins/xxx → /api/v1/plugins/xxx
+              pluginBasePath = `${config.basePath}${manifest.rest.basePath}`;
+            }
+          } else {
+            // No basePath, use plugin ID
+            pluginBasePath = `${config.basePath}/plugins/${manifest.id}`;
+          }
 
           platform.logger.info({
             plugin: `${manifest.id}@${manifest.version}`,
@@ -211,11 +231,62 @@ export async function registerPluginRoutes(
             plugin: `${manifest.id}@${manifest.version}`,
             durationMs: Number(duration.toFixed(2)),
           }, 'Successfully mounted plugin routes');
+
+          // Mount WebSocket channels if present
+          let channelsCount = 0;
+          if (manifest.ws?.channels && manifest.ws.channels.length > 0) {
+            try {
+              const wsStart = performance.now();
+              const wsBasePath = manifest.ws.basePath || `/v1/ws/plugins/${manifest.id}`;
+
+              platform.logger.info({
+                plugin: `${manifest.id}@${manifest.version}`,
+                wsBasePath,
+                channels: manifest.ws.channels.length,
+              }, 'Mounting WebSocket channels');
+
+              const wsResult = await mountWebSocketChannels(server, manifest, {
+                backend,
+                pluginRoot,
+                workspaceRoot,
+                basePath: wsBasePath,
+                defaultTimeoutMs: manifest.ws.defaults?.timeoutMs ?? gatewayTimeoutMs,
+                defaultMaxMessageSize: manifest.ws.defaults?.maxMessageSize,
+              });
+
+              const wsDuration = performance.now() - wsStart;
+              channelsCount = wsResult.mounted;
+
+              if (wsResult.mounted > 0) {
+                platform.logger.info({
+                  plugin: `${manifest.id}@${manifest.version}`,
+                  channels: wsResult.mounted,
+                  durationMs: Number(wsDuration.toFixed(2)),
+                }, 'Successfully mounted WebSocket channels');
+              }
+
+              if (wsResult.errors.length > 0) {
+                platform.logger.warn({
+                  plugin: `${manifest.id}@${manifest.version}`,
+                  errors: wsResult.errors,
+                }, 'WebSocket channel mounting had errors');
+              }
+            } catch (wsError) {
+              platform.logger.error(
+                'Failed to mount WebSocket channels',
+                wsError instanceof Error ? wsError : new Error(String(wsError)),
+                { plugin: manifest.id }
+              );
+              // Continue execution even if WS fails - REST might still work
+            }
+          }
+
           return {
             success: true,
             pluginId: manifest.id,
             error: false,
             routesCount,
+            channelsCount,
           };
         } catch (error) {
           mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
@@ -229,6 +300,7 @@ export async function registerPluginRoutes(
             pluginId: manifest.id,
             error: true,
             routesCount: 0,
+            channelsCount: 0,
             failureError: `rest_mount_failed ${shortErrorMessage(error)}`,
           };
         }
@@ -240,6 +312,7 @@ export async function registerPluginRoutes(
 
     // Aggregate stats from results (avoid race conditions)
     let mountedRoutes = 0;
+    let mountedChannels = 0;
     let errors = 0;
     const succeeded: string[] = [];
     const failed: string[] = [];
@@ -250,6 +323,7 @@ export async function registerPluginRoutes(
         const value = result.value;
         if (value.success) {
           mountedRoutes += value.routesCount ?? 0;
+          mountedChannels += value.channelsCount ?? 0;
           succeeded.push(value.pluginId);
         } else {
           errors += 1;
@@ -275,6 +349,7 @@ export async function registerPluginRoutes(
 
     // Update stats and readiness (safely, after all parallel operations complete)
     stats.mountedRoutes = mountedRoutes;
+    stats.mountedChannels = mountedChannels;
     stats.errors = errors;
     if (readiness) {
       readiness.pluginRouteFailures = routeFailures;
@@ -286,8 +361,9 @@ export async function registerPluginRoutes(
       succeeded: succeeded.length,
       failed: failed.length,
       mountedRoutes,
+      mountedChannels,
       errors,
-    }, 'Parallel plugin route mounting completed');
+    }, 'Parallel plugin route and WebSocket channel mounting completed');
   } catch (error) {
     platform.logger.error(
       'Plugin discovery failed',

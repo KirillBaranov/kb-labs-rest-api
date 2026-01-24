@@ -25,6 +25,8 @@ interface LLMUsageStats {
       totalTokens: number;
       cost: number;
       costPer1KTokens: number; // Enhanced: Cost per 1K tokens for this model
+      tokensPerRequest: number; // Enhanced: Average tokens per request
+      errorRate: number; // Enhanced: Error rate percentage (0-100)
       avgDurationMs: number;
       // Enhanced: Latency percentiles
       p50DurationMs: number;
@@ -126,16 +128,16 @@ export async function registerAdaptersRoutes(
         // Extract and validate date range
         const dateRange = extractDateRange(request.query);
 
-        // Fetch LLM completion events
+        // Fetch LLM completion events (both regular completion and chatWithTools)
         const completedEvents = await analytics.getEvents({
-          type: 'llm.completion.completed',
+          type: ['llm.completion.completed', 'llm.chatWithTools.completed'],
           from: dateRange.from,
           to: dateRange.to,
           limit: 10000, // TODO: Pagination
         });
 
         const errorEvents = await analytics.getEvents({
-          type: 'llm.completion.error',
+          type: ['llm.completion.error', 'llm.chatWithTools.error'],
           from: dateRange.from,
           to: dateRange.to,
           limit: 1000,
@@ -178,6 +180,9 @@ export async function registerAdaptersRoutes(
         // Collect durations per model for percentile calculation
         const durationsByModel: Record<string, number[]> = {};
 
+        // Track errors per model
+        const errorsByModel: Record<string, number> = {};
+
         // Process completed events
         for (const event of completedEvents.events) {
           const props = getEventData(event);
@@ -201,6 +206,8 @@ export async function registerAdaptersRoutes(
               totalTokens: 0,
               cost: 0,
               costPer1KTokens: 0,
+              tokensPerRequest: 0,
+              errorRate: 0,
               avgDurationMs: 0,
               p50DurationMs: 0,
               p95DurationMs: 0,
@@ -227,6 +234,10 @@ export async function registerAdaptersRoutes(
           const props = getEventData(event);
           const errorType = String(props.errorType || props.errorCode || '').toLowerCase();
           const errorMessage = String(props.error || props.message || '').toLowerCase();
+          const model = (props.model || 'unknown') as string;
+
+          // Track errors per model
+          errorsByModel[model] = (errorsByModel[model] || 0) + 1;
 
           // Categorize error by type
           if (errorType.includes('timeout') || errorMessage.includes('timeout') || errorMessage.includes('timed out')) {
@@ -261,6 +272,18 @@ export async function registerAdaptersRoutes(
           // Calculate cost per 1K tokens
           if (modelStats.totalTokens > 0) {
             modelStats.costPer1KTokens = (modelStats.cost / modelStats.totalTokens) * 1000;
+          }
+
+          // Calculate tokens per request
+          if (modelStats.requests > 0) {
+            modelStats.tokensPerRequest = modelStats.totalTokens / modelStats.requests;
+          }
+
+          // Calculate error rate percentage
+          const modelErrors = errorsByModel[model] || 0;
+          const totalModelRequests = modelStats.requests + modelErrors;
+          if (totalModelRequests > 0) {
+            modelStats.errorRate = (modelErrors / totalModelRequests) * 100;
           }
         }
 
@@ -330,7 +353,7 @@ export async function registerAdaptersRoutes(
         const dateRange = extractDateRange(request.query);
 
         const dailyStats = await analytics.getDailyStats({
-          type: 'llm.completion.completed',
+          type: ['llm.completion.completed', 'llm.chatWithTools.completed'],
           from: dateRange.from,
           to: dateRange.to,
           limit: 10000,

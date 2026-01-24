@@ -14,11 +14,89 @@ import { platform } from '@kb-labs/core-runtime';
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { existsSync } from 'node:fs';
+import type { ILogger } from '@kb-labs/core-platform';
 
 /**
  * Fastify internal symbol to disable request logging
  */
 const kDisableRequestLogging = Symbol.for('fastify.disableRequestLogging');
+
+/**
+ * Create a Pino-compatible wrapper for ILogger
+ * Fastify 5 expects a Pino instance, but we want vendor independence
+ */
+function createPinoCompatibleLogger(logger: ILogger): any {
+  const levels = {
+    trace: 10,
+    debug: 20,
+    info: 30,
+    warn: 40,
+    error: 50,
+    fatal: 60,
+  };
+
+  const wrapper = {
+    // Pino log levels
+    trace: (msg: string | object, ...args: any[]) => {
+      if (typeof msg === 'object') {
+        logger.debug(JSON.stringify(msg), msg);
+      } else {
+        logger.debug(msg, ...args);
+      }
+    },
+    debug: (msg: string | object, ...args: any[]) => {
+      if (typeof msg === 'object') {
+        logger.debug(JSON.stringify(msg), msg);
+      } else {
+        logger.debug(msg, ...args);
+      }
+    },
+    info: (msg: string | object, ...args: any[]) => {
+      if (typeof msg === 'object') {
+        logger.info(JSON.stringify(msg), msg);
+      } else {
+        logger.info(msg, ...args);
+      }
+    },
+    warn: (msg: string | object, ...args: any[]) => {
+      if (typeof msg === 'object') {
+        logger.warn(JSON.stringify(msg), msg);
+      } else {
+        logger.warn(msg, ...args);
+      }
+    },
+    error: (msg: string | object, ...args: any[]) => {
+      if (typeof msg === 'object') {
+        logger.error(JSON.stringify(msg), msg instanceof Error ? msg : undefined);
+      } else {
+        logger.error(msg, args[0] instanceof Error ? args[0] : undefined);
+      }
+    },
+    fatal: (msg: string | object, ...args: any[]) => {
+      if (typeof msg === 'object') {
+        logger.error(`[FATAL] ${JSON.stringify(msg)}`, msg instanceof Error ? msg : undefined);
+      } else {
+        logger.error(`[FATAL] ${msg}`, args[0] instanceof Error ? args[0] : undefined);
+      }
+    },
+    // Pino child method
+    child: (bindings: Record<string, unknown>) => {
+      const childLogger = logger.child(bindings);
+      return createPinoCompatibleLogger(childLogger);
+    },
+    // Pino required properties for Fastify 5
+    level: 'info',
+    levels: {
+      values: levels,
+      labels: { 10: 'trace', 20: 'debug', 30: 'info', 40: 'warn', 50: 'error', 60: 'fatal' },
+    },
+    silent: false,
+    // Pino version symbol (required by Fastify 5 validation)
+    [Symbol.for('pino.version')]: '8.0.0',
+  };
+
+  return wrapper;
+}
 
 /**
  * Create and configure Fastify server
@@ -52,16 +130,16 @@ export async function createServer(
     }
   }
 
-  // Use platform logger directly (PinoLoggerAdapter wraps Pino)
-  // Cast to any because Fastify expects Pino instance, but our ILogger is compatible
+  // Create platform logger child for REST layer
   const restLogger = platform.logger.child({
     layer: 'rest',
     service: 'server',
     traceId: randomUUID(),
   });
 
+  // Fastify 5 is too strict with logger validation, so disable it and use hooks
   const server = Fastify({
-    logger: restLogger as any, // Use our platform logger directly
+    logger: false, // Disable Fastify's logger validation
     requestIdHeader: 'X-Request-Id',
     requestIdLogLabel: 'requestId',
     disableRequestLogging: true,
@@ -70,6 +148,9 @@ export async function createServer(
     http2: useHttp2 && httpsOptions ? true : false,
     https: httpsOptions,
   });
+
+  // Add our own logger to server instance
+  (server as any).log = restLogger;
 
   // Override child logger factory to return our custom logger with disable flag
   server.setChildLoggerFactory((logger, bindings, opts, rawReq) => {
