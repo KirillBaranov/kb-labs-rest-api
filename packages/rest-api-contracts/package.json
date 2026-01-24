@@ -20,7 +20,10 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "clean": "rimraf dist",
     "lint": "eslint src",
-    "test": "vitest run"
+    "test": "vitest run",
+    "lint:fix": "eslint . --fix",
+    "type-check": "tsc --noEmit",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@kb-labs/studio-contracts": "link:../../../kb-labs-studio/packages/studio-contracts",
@@ -34,5 +37,9 @@
     "typescript": "^5.6.3",
     "vitest": "^3.2.4"
   },
-  "private": true
+  "private": true,
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  }
 }
