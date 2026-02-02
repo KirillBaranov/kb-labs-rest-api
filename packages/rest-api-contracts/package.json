@@ -20,7 +20,7 @@
     "dev": "tsup --config tsup.config.ts --watch",
     "clean": "rimraf dist",
     "lint": "eslint src",
-    "test": "vitest run",
+    "test": "vitest run --passWithNoTests",
     "lint:fix": "eslint . --fix",
     "type-check": "tsc --noEmit",
     "test:watch": "vitest"

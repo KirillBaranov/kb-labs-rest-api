@@ -3,7 +3,7 @@
  * Scheduled jobs management endpoints
  */
 
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ICronManager } from '@kb-labs/core-platform';
 import { z } from 'zod';

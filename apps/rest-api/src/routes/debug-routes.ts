@@ -28,7 +28,7 @@ function collectRoute(routeOptions: RouteOptions): void {
 
   for (const method of methods) {
     // Skip HEAD (auto-generated for GET routes) and internal routes
-    if (method === 'HEAD') continue;
+    if (method === 'HEAD') {continue;}
 
     const url = routeOptions.url;
     const key = `${method}:${url}`;
@@ -71,7 +71,7 @@ export async function registerDebugRoutes(
       // Sort routes by URL, then by method
       routes.sort((a, b) => {
         const urlCompare = a.url.localeCompare(b.url);
-        if (urlCompare !== 0) return urlCompare;
+        if (urlCompare !== 0) {return urlCompare;}
         return a.method.localeCompare(b.method);
       });
 

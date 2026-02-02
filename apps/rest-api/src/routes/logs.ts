@@ -13,14 +13,14 @@ import type { EventHub } from '../events/hub';
  * Map Pino numeric level to string level
  */
 function mapPinoLevelToString(level: any): string {
-  if (typeof level === 'string') return level;
+  if (typeof level === 'string') {return level;}
 
   // Pino levels: 10=trace, 20=debug, 30=info, 40=warn, 50=error, 60=fatal
-  if (level <= 10) return 'trace';
-  if (level <= 20) return 'debug';
-  if (level <= 30) return 'info';
-  if (level <= 40) return 'warn';
-  if (level <= 50) return 'error';
+  if (level <= 10) {return 'trace';}
+  if (level <= 20) {return 'debug';}
+  if (level <= 30) {return 'info';}
+  if (level <= 40) {return 'warn';}
+  if (level <= 50) {return 'error';}
   return 'fatal';
 }
 
@@ -83,9 +83,9 @@ function buildLogSummaryPrompt(
 
   // Filter logs based on includeContext
   const relevantLogs = logs.filter(log => {
-    if (!includeContext.errors && log.level === 'error') return false;
-    if (!includeContext.warnings && log.level === 'warn') return false;
-    if (!includeContext.info && log.level === 'info') return false;
+    if (!includeContext.errors && log.level === 'error') {return false;}
+    if (!includeContext.warnings && log.level === 'warn') {return false;}
+    if (!includeContext.info && log.level === 'info') {return false;}
     return true;
   });
 
@@ -101,8 +101,8 @@ function buildLogSummaryPrompt(
     prompt += `: ${log.msg || '(no message)'}\n`;
 
     if (includeContext.metadata && (log.traceId || log.executionId)) {
-      if (log.traceId) prompt += `  traceId: ${log.traceId}\n`;
-      if (log.executionId) prompt += `  executionId: ${log.executionId}\n`;
+      if (log.traceId) {prompt += `  traceId: ${log.traceId}\n`;}
+      if (log.executionId) {prompt += `  executionId: ${log.executionId}\n`;}
     }
 
     if (includeContext.stackTraces && log.err?.stack) {
@@ -164,7 +164,7 @@ async function findRelatedLogs(targetLog: LogRecord): Promise<any[]> {
 
     // Filter in-memory by correlation keys
     for (const log of result.logs) {
-      if (log.id === targetLog.id) continue; // Skip self
+      if (log.id === targetLog.id) {continue;} // Skip self
 
       const logKeys = extractCorrelationKeys(log);
 

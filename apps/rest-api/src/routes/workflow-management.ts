@@ -3,16 +3,14 @@
  * Provides CRUD operations and schedule management for workflows
  */
 
-import type { FastifyInstance, FastifyRequest } from 'fastify';
+import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { IWorkflowEngine, ICronManager } from '@kb-labs/core-platform';
-import { WorkflowSpecSchema, type WorkflowSpec } from '@kb-labs/workflow-contracts';
+import { WorkflowSpecSchema } from '@kb-labs/workflow-contracts';
 import {
   WorkflowService,
-  WorkflowRepository,
-  ManifestScanner,
   WorkflowScheduleManager,
   type WorkflowRuntime,
   type WorkflowExecutor,

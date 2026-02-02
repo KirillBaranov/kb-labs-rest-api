@@ -35,7 +35,7 @@ function createPinoCompatibleLogger(logger: ILogger): any {
     fatal: 60,
   };
 
-  const wrapper = {
+  return {
     // Pino log levels
     trace: (msg: string | object, ...args: any[]) => {
       if (typeof msg === 'object') {
@@ -94,8 +94,6 @@ function createPinoCompatibleLogger(logger: ILogger): any {
     // Pino version symbol (required by Fastify 5 validation)
     [Symbol.for('pino.version')]: '8.0.0',
   };
-
-  return wrapper;
 }
 
 /**

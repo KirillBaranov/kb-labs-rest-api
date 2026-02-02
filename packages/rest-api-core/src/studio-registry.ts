@@ -65,7 +65,7 @@ export function combineManifestsToRegistry(
   const plugins: StudioPluginEntry[] = [];
 
   for (const manifest of manifests) {
-    if (!manifest.studio) continue;
+    if (!manifest.studio) {continue;}
 
     const { plugin } = manifestToRegistry(manifest);
     plugins.push(plugin);

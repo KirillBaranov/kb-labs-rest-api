@@ -403,7 +403,7 @@ export class HistoricalMetricsCollector {
    * Aggregate data points by interval
    */
   private aggregateByInterval(dataPoints: HistoricalDataPoint[], interval: '1m' | '5m'): HistoricalDataPoint[] {
-    if (dataPoints.length === 0) return [];
+    if (dataPoints.length === 0) {return [];}
 
     const intervalMs = interval === '1m' ? 60 * 1000 : 5 * 60 * 1000;
     const aggregated: HistoricalDataPoint[] = [];
@@ -488,7 +488,7 @@ export class HistoricalMetricsCollector {
   }
 
   private log(level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: any): void {
-    if (level === 'debug' && !this.config.debug) return;
+    if (level === 'debug' && !this.config.debug) {return;}
 
     if (this.logger[level]) {
       this.logger[level](`[HistoricalMetrics] ${message}`, meta);

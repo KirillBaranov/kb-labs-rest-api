@@ -10,7 +10,6 @@ import {
 } from '../plugins';
 import type { ReadinessState } from '../readiness';
 import * as fs from 'node:fs/promises';
-import * as path from 'node:path';
 
 // Mock dependencies
 vi.mock('@kb-labs/plugin-execution/http', () => ({

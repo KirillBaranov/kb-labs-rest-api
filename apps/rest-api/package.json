@@ -29,6 +29,7 @@
     "@kb-labs/core-workspace": "link:../../../kb-labs-core/packages/core-workspace",
     "@kb-labs/plugin-contracts": "link:../../../kb-labs-plugin/packages/plugin-contracts",
     "@kb-labs/plugin-execution": "link:../../../kb-labs-plugin/packages/plugin-execution",
+    "@kb-labs/plugin-execution-factory": "link:../../../kb-labs-plugin/packages/plugin-execution-factory",
     "@kb-labs/plugin-runtime": "link:../../../kb-labs-plugin/packages/plugin-runtime",
     "@kb-labs/rest-api-contracts": "link:../../packages/rest-api-contracts",
     "@kb-labs/rest-api-core": "link:../../packages/rest-api-core",

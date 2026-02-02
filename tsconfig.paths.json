@@ -60,6 +60,12 @@
       "@kb-labs/plugin-execution": [
         "../kb-labs-plugin/packages/plugin-execution/src/index.ts"
       ],
+      "@kb-labs/plugin-execution-factory": [
+        "../kb-labs-plugin/packages/plugin-execution-factory/src/index.ts"
+      ],
+      "@kb-labs/plugin-execution-factory/*": [
+        "../kb-labs-plugin/packages/plugin-execution-factory/src/*"
+      ],
       "@kb-labs/plugin-execution/*": [
         "../kb-labs-plugin/packages/plugin-execution/src/*"
       ],

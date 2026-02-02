@@ -85,6 +85,26 @@ function extractDateRange(query: any): { from?: string; to?: string } {
 }
 
 /**
+ * Extract model filter from query parameters
+ * Supports both single model (?models=gpt-4) and multiple (?models=gpt-4,claude-sonnet)
+ */
+function extractModelFilter(query: any): string[] | undefined {
+  if (!query || !query.models) {
+    return undefined;
+  }
+
+  const modelsParam = query.models as string;
+
+  // Split by comma and trim whitespace
+  const models = modelsParam
+    .split(',')
+    .map((m) => m.trim())
+    .filter((m) => m.length > 0);
+
+  return models.length > 0 ? models : undefined;
+}
+
+/**
  * Basic ISO 8601 validation
  */
 function isValidISODate(dateString: string): boolean {
@@ -334,30 +354,84 @@ export async function registerAdaptersRoutes(
 
   // GET /api/v1/adapters/llm/daily-stats
   // Returns daily aggregated LLM statistics for time-series visualization
+  // Supports optional ?models=model1,model2 parameter to filter by specific models
   const llmDailyStatsPaths = resolvePaths(basePath, '/adapters/llm/daily-stats');
   for (const path of llmDailyStatsPaths) {
     fastify.get(path, async (request, reply) => {
       const analytics = platform.analytics;
 
-      if (!analytics.getDailyStats) {
+      if (!analytics.getEvents) {
         return reply.code(501).send({
           ok: false,
           error: {
-            code: 'DAILY_STATS_NOT_IMPLEMENTED',
-            message: 'Analytics adapter does not support daily statistics',
+            code: 'ANALYTICS_NOT_IMPLEMENTED',
+            message: 'Analytics adapter does not support reading events',
           },
         });
       }
 
       try {
         const dateRange = extractDateRange(request.query);
+        const modelFilter = extractModelFilter(request.query);
 
-        const dailyStats = await analytics.getDailyStats({
+        // Fetch all LLM events (we'll filter and aggregate manually)
+        const { events } = await analytics.getEvents({
           type: ['llm.completion.completed', 'llm.chatWithTools.completed'],
           from: dateRange.from,
           to: dateRange.to,
           limit: 10000,
         });
+
+        // Filter by models if specified
+        let filteredEvents = events;
+        if (modelFilter && modelFilter.length > 0) {
+          filteredEvents = events.filter((event) => {
+            const eventData = getEventData(event);
+            const model = eventData.model as string | undefined;
+            return model && modelFilter.includes(model);
+          });
+        }
+
+        // Group events by date (YYYY-MM-DD)
+        const eventsByDate = new Map<string, any[]>();
+
+        for (const event of filteredEvents) {
+          // Extract date in YYYY-MM-DD format
+          const date = event.ts.split('T')[0];
+          if (!eventsByDate.has(date)) {
+            eventsByDate.set(date, []);
+          }
+          eventsByDate.get(date)!.push(event);
+        }
+
+        // Aggregate metrics for each day
+        const dailyStats: Array<{ date: string; count: number; metrics: Record<string, number> }> = [];
+
+        for (const [date, dayEvents] of eventsByDate.entries()) {
+          let totalTokens = 0;
+          let totalCost = 0;
+          let totalDuration = 0;
+
+          for (const event of dayEvents) {
+            const eventData = getEventData(event);
+            totalTokens += Number(eventData.totalTokens || 0);
+            totalCost += Number(eventData.estimatedCost || eventData.cost || 0);
+            totalDuration += Number(eventData.durationMs || 0);
+          }
+
+          dailyStats.push({
+            date,
+            count: dayEvents.length,
+            metrics: {
+              totalTokens,
+              totalCost,
+              avgDurationMs: dayEvents.length > 0 ? totalDuration / dayEvents.length : 0,
+            },
+          });
+        }
+
+        // Sort by date ascending
+        dailyStats.sort((a, b) => a.date.localeCompare(b.date));
 
         return reply.send({
           ok: true,

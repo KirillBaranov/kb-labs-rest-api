@@ -199,7 +199,9 @@ describe('registerCacheRoutes', () => {
 
       vi.mocked(mockCliApi.snapshot).mockReturnValue(snapshot);
       vi.mocked(mockCliApi.refresh).mockImplementation(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 10));
+        await new Promise((resolve) => {
+          setTimeout(resolve, 10);
+        });
       });
       vi.mocked(mockCliApi.listPlugins).mockResolvedValue([]);
 

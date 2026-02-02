@@ -176,9 +176,7 @@ import type { StudioRegistry } from '@kb-labs/studio-contracts';
  * GET /studio/registry response
  * Extends StudioRegistry with REST-specific metadata
  */
-export interface StudioRegistryResponse extends StudioRegistry {
-  // REST-specific fields can be added here if needed
-}
+export type StudioRegistryResponse = StudioRegistry;
 
 /**
  * Batch data request for multiple widgets

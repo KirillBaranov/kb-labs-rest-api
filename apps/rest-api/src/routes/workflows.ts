@@ -75,13 +75,13 @@ export async function registerWorkflowRoutes(
   // Helper to extract tenantId from headers
   const getTenantId = (headers: Record<string, unknown>): string | undefined => {
     const tenantHeader = headers['x-tenant-id'];
-    if (!tenantHeader) return undefined;
+    if (!tenantHeader) {return undefined;}
     return Array.isArray(tenantHeader) ? tenantHeader[0] : String(tenantHeader);
   };
 
   // Create WorkflowsAPI and JobsAPI with full permissions for REST API
   const createWorkflowsAPIForRequest = (request: FastifyRequest): WorkflowsAPI | null => {
-    if (!workflowEngine) return null;
+    if (!workflowEngine) {return null;}
     return createWorkflowsAPI({
       tenantId: getTenantId(request.headers),
       engine: workflowEngine,
@@ -94,7 +94,7 @@ export async function registerWorkflowRoutes(
   };
 
   const createJobsAPIForRequest = (request: FastifyRequest): JobsAPI | null => {
-    if (!jobScheduler) return null;
+    if (!jobScheduler) {return null;}
     return createJobsAPI({
       tenantId: getTenantId(request.headers),
       scheduler: jobScheduler,

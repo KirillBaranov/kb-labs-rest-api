@@ -13,7 +13,6 @@ import { hostname } from 'node:os';
 import type { HistoricalMetricsCollector } from '../services/historical-metrics';
 import type { IncidentStorage } from '../services/incident-storage';
 import { IncidentAnalyzer } from '../services/incident-analyzer';
-import { platform } from '@kb-labs/core-runtime';
 import type { SystemMetrics } from '../services/system-metrics-collector';
 
 const execAsync = promisify(exec);

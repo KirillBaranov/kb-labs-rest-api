@@ -131,7 +131,7 @@ describe('registerEventRoutes', () => {
         subscribers.push(callback);
         return () => {
           const index = subscribers.indexOf(callback);
-          if (index > -1) subscribers.splice(index, 1);
+          if (index > -1) {subscribers.splice(index, 1);}
         };
       }),
       broadcast: vi.fn((event: BroadcastEvent) => {

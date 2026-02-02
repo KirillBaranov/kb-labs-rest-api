@@ -582,7 +582,7 @@ export class IncidentStorage {
   }
 
   private log(level: 'info' | 'warn' | 'error' | 'debug', message: string, meta?: any): void {
-    if (level === 'debug' && !this.config.debug) return;
+    if (level === 'debug' && !this.config.debug) {return;}
 
     if (this.logger[level]) {
       this.logger[level](`[IncidentStorage] ${message}`, meta);
