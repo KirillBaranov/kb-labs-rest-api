@@ -197,7 +197,9 @@ describe('registerEventRoutes', () => {
       });
 
       // Wait for async health fetch
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('event: health');
@@ -232,7 +234,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('"redisEnabled":true');
@@ -246,7 +250,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('"pluginsMounted":5');
@@ -263,7 +269,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('"registryPartial":true');
@@ -281,7 +289,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       // Should still send registry event, just not health event
       const body = response.body;
@@ -375,7 +385,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('"redisEnabled":false');
@@ -391,7 +403,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('"pluginsMounted":0');
@@ -407,7 +421,9 @@ describe('registerEventRoutes', () => {
         url: '/api/v1/events/registry',
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 10));
+      await new Promise((resolve) => {
+        setTimeout(resolve, 10);
+      });
 
       const body = response.body;
       expect(body).toContain('"lastPluginMountTs":null');

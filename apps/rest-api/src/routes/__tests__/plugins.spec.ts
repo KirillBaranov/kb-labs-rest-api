@@ -557,7 +557,9 @@ describe('registerPluginRoutes', () => {
   });
 
   it('registers route budgets for metrics tracking', async () => {
-    const { metricsCollector } = await import('../middleware/metrics');
+    // Dynamic imports in ESM require .js extension for runtime resolution
+    // eslint-disable-next-line import/extensions
+    const { metricsCollector } = await import('../middleware/metrics.js');
     const registerBudgetMock = vi.mocked(metricsCollector.registerRouteBudget);
 
     const manifest = createMockManifest({
