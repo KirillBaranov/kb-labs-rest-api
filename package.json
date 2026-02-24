@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/rest-api",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "REST API service for KB Labs ecosystem",
   "type": "module",
   "author": {
