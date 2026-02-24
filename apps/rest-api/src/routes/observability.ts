@@ -1353,7 +1353,9 @@ Be concise but thorough. Use markdown formatting.`;
       fastify.log.info(`Simulating ${delayMs}ms latency`);
 
       // Simulate slow response
-      await new Promise(resolve => setTimeout(resolve, delayMs));
+      await new Promise(resolve => {
+        setTimeout(resolve, delayMs);
+      });
 
       return {
         ok: true,

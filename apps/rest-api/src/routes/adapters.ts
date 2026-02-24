@@ -105,6 +105,95 @@ function extractModelFilter(query: any): string[] | undefined {
 }
 
 /**
+ * Extract StatsQuery fields (groupBy, breakdownBy, metrics) from query parameters.
+ * These are optional — adapters silently ignore fields they don't support.
+ */
+function extractStatsOptions(query: any): {
+  groupBy?: 'hour' | 'day' | 'week' | 'month';
+  breakdownBy?: string;
+  metrics?: string[];
+} {
+  if (!query) return {};
+
+  const groupBy = query.groupBy as string | undefined;
+  const validGroupBy = ['hour', 'day', 'week', 'month'];
+  const resolvedGroupBy =
+    groupBy && validGroupBy.includes(groupBy)
+      ? (groupBy as 'hour' | 'day' | 'week' | 'month')
+      : undefined;
+
+  const breakdownBy = query.breakdownBy as string | undefined;
+
+  const metricsParam = query.metrics as string | undefined;
+  const metrics = metricsParam
+    ? metricsParam
+        .split(',')
+        .map((m) => m.trim())
+        .filter((m) => m.length > 0)
+    : undefined;
+
+  return {
+    groupBy: resolvedGroupBy,
+    breakdownBy: breakdownBy || undefined,
+    metrics: metrics && metrics.length > 0 ? metrics : undefined,
+  };
+}
+
+/**
+ * Fetch all events for a given query in batches to avoid memory issues.
+ *
+ * Backend handles pagination internally:
+ * - PAGE_SIZE: 10,000 events per request
+ * - MAX_EVENTS: 100,000 total events to process
+ *
+ * Frontend just sends date range, backend fetches all events in that range.
+ *
+ * @param analytics - Analytics adapter
+ * @param query - Event query (type, from, to)
+ * @param fastify - Fastify instance for logging
+ * @returns All events (up to MAX_EVENTS)
+ */
+async function fetchAllEventsBatched(
+  analytics: any,
+  query: { type: string | string[]; from?: string; to?: string },
+  fastify: FastifyInstance
+): Promise<any[]> {
+  const PAGE_SIZE = 10000;
+  const MAX_EVENTS = 100000;
+
+  const allEvents: any[] = [];
+  let offset = 0;
+  let hasMore = true;
+
+  while (hasMore && allEvents.length < MAX_EVENTS) {
+    const response = await analytics.getEvents({
+      ...query,
+      limit: PAGE_SIZE,
+      offset,
+    });
+
+    allEvents.push(...response.events);
+    hasMore = response.hasMore;
+    offset += PAGE_SIZE;
+
+    // Stop if we've fetched all events or page not full
+    if (!hasMore || response.events.length < PAGE_SIZE) {
+      break;
+    }
+  }
+
+  // Warn if we hit the safety limit
+  if (allEvents.length >= MAX_EVENTS) {
+    fastify.log.warn(
+      `Hit max events limit (${MAX_EVENTS}) for query. Some events excluded from stats.`,
+      { query }
+    );
+  }
+
+  return allEvents;
+}
+
+/**
  * Basic ISO 8601 validation
  */
 function isValidISODate(dateString: string): boolean {
@@ -148,31 +237,37 @@ export async function registerAdaptersRoutes(
         // Extract and validate date range
         const dateRange = extractDateRange(request.query);
 
-        // Fetch LLM completion events (both regular completion and chatWithTools)
-        const completedEvents = await analytics.getEvents({
-          type: ['llm.completion.completed', 'llm.chatWithTools.completed'],
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 10000, // TODO: Pagination
-        });
+        // Fetch ALL LLM completion events in batches (backend handles pagination)
+        const completedEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: ['llm.completion.completed', 'llm.chatWithTools.completed'],
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
-        const errorEvents = await analytics.getEvents({
-          type: ['llm.completion.error', 'llm.chatWithTools.error'],
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000,
-        });
+        // Fetch ALL error events in batches
+        const errorEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: ['llm.completion.error', 'llm.chatWithTools.error'],
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
         // Debug logging
         fastify.log.debug('LLM analytics query results', {
-          completedCount: completedEvents.events.length,
-          completedTotal: completedEvents.total,
-          errorCount: errorEvents.events.length,
-          sampleEvent: completedEvents.events[0] ? {
-            schema: (completedEvents.events[0] as any).schema,
-            type: completedEvents.events[0].type,
-            hasPayload: !!(completedEvents.events[0] as any).payload,
-            hasProperties: !!(completedEvents.events[0] as any).properties,
+          completedCount: completedEvents.length,
+          errorCount: errorEvents.length,
+          sampleEvent: completedEvents[0] ? {
+            schema: (completedEvents[0] as any).schema,
+            type: completedEvents[0].type,
+            hasPayload: !!(completedEvents[0] as any).payload,
+            hasProperties: !!(completedEvents[0] as any).properties,
           } : null,
         });
 
@@ -183,7 +278,7 @@ export async function registerAdaptersRoutes(
           totalCost: 0,
           costPer1KTokens: 0,
           byModel: {},
-          errors: errorEvents.events.length,
+          errors: errorEvents.length,
           errorBreakdown: {
             timeout: 0,
             rateLimit: 0,
@@ -204,7 +299,7 @@ export async function registerAdaptersRoutes(
         const errorsByModel: Record<string, number> = {};
 
         // Process completed events
-        for (const event of completedEvents.events) {
+        for (const event of completedEvents) {
           const props = getEventData(event);
 
           const model = (props.model || 'unknown') as string;
@@ -250,7 +345,7 @@ export async function registerAdaptersRoutes(
         }
 
         // Process error events for breakdown
-        for (const event of errorEvents.events) {
+        for (const event of errorEvents) {
           const props = getEventData(event);
           const errorType = String(props.errorType || props.errorCode || '').toLowerCase();
           const errorMessage = String(props.error || props.message || '').toLowerCase();
@@ -313,7 +408,7 @@ export async function registerAdaptersRoutes(
         }
 
         // Calculate time range
-        const allTimestamps = completedEvents.events.map((e) => e.ts);
+        const allTimestamps = completedEvents.map((e) => e.ts);
         if (allTimestamps.length > 0) {
           stats.timeRange.from = allTimestamps[allTimestamps.length - 1]!; // oldest
           stats.timeRange.to = allTimestamps[0]!; // newest
@@ -353,101 +448,54 @@ export async function registerAdaptersRoutes(
   }
 
   // GET /api/v1/adapters/llm/daily-stats
-  // Returns daily aggregated LLM statistics for time-series visualization
-  // Supports optional ?models=model1,model2 parameter to filter by specific models
+  // Returns time-bucketed aggregated LLM statistics for time-series visualization
+  // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv), models (csv, legacy filter)
   const llmDailyStatsPaths = resolvePaths(basePath, '/adapters/llm/daily-stats');
   for (const path of llmDailyStatsPaths) {
     fastify.get(path, async (request, reply) => {
       const analytics = platform.analytics;
 
-      if (!analytics.getEvents) {
+      if (!analytics.getDailyStats) {
         return reply.code(501).send({
           ok: false,
           error: {
-            code: 'ANALYTICS_NOT_IMPLEMENTED',
-            message: 'Analytics adapter does not support reading events',
+            code: 'DAILY_STATS_NOT_IMPLEMENTED',
+            message: 'Analytics adapter does not support daily statistics',
           },
         });
       }
 
       try {
         const dateRange = extractDateRange(request.query);
+        const statsOptions = extractStatsOptions(request.query);
         const modelFilter = extractModelFilter(request.query);
 
-        // Fetch all LLM events (we'll filter and aggregate manually)
-        const { events } = await analytics.getEvents({
+        const dailyStats = await analytics.getDailyStats({
           type: ['llm.completion.completed', 'llm.chatWithTools.completed'],
           from: dateRange.from,
           to: dateRange.to,
-          limit: 10000,
+          limit: 50000,
+          // Legacy ?models= filter maps to source filter via getEvents inside the adapter.
+          // When breakdownBy is provided explicitly it takes precedence.
+          // Models filter is handled post-aggregation below for backward compat.
+          ...statsOptions,
         });
 
-        // Filter by models if specified
-        let filteredEvents = events;
-        if (modelFilter && modelFilter.length > 0) {
-          filteredEvents = events.filter((event) => {
-            const eventData = getEventData(event);
-            const model = eventData.model as string | undefined;
-            return model && modelFilter.includes(model);
-          });
-        }
+        // Legacy model filter: post-filter rows by breakdown value when models param is used
+        // without an explicit breakdownBy (backward compatibility with existing Studio pages)
+        const result =
+          modelFilter && modelFilter.length > 0 && !statsOptions.breakdownBy
+            ? dailyStats.filter((s) => !s.breakdown || modelFilter.includes(s.breakdown))
+            : dailyStats;
 
-        // Group events by date (YYYY-MM-DD)
-        const eventsByDate = new Map<string, any[]>();
-
-        for (const event of filteredEvents) {
-          // Extract date in YYYY-MM-DD format
-          const date = event.ts.split('T')[0];
-          if (!eventsByDate.has(date)) {
-            eventsByDate.set(date, []);
-          }
-          eventsByDate.get(date)!.push(event);
-        }
-
-        // Aggregate metrics for each day
-        const dailyStats: Array<{ date: string; count: number; metrics: Record<string, number> }> = [];
-
-        for (const [date, dayEvents] of eventsByDate.entries()) {
-          let totalTokens = 0;
-          let totalCost = 0;
-          let totalDuration = 0;
-
-          for (const event of dayEvents) {
-            const eventData = getEventData(event);
-            totalTokens += Number(eventData.totalTokens || 0);
-            totalCost += Number(eventData.estimatedCost || eventData.cost || 0);
-            totalDuration += Number(eventData.durationMs || 0);
-          }
-
-          dailyStats.push({
-            date,
-            count: dayEvents.length,
-            metrics: {
-              totalTokens,
-              totalCost,
-              avgDurationMs: dayEvents.length > 0 ? totalDuration / dayEvents.length : 0,
-            },
-          });
-        }
-
-        // Sort by date ascending
-        dailyStats.sort((a, b) => a.date.localeCompare(b.date));
-
-        return reply.send({
-          ok: true,
-          data: dailyStats,
-        });
+        return reply.send({ ok: true, data: result });
       } catch (error) {
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
-              message: error.message,
-            },
+            error: { code: 'INVALID_DATE_RANGE', message: error.message },
           });
         }
-
         return reply.code(500).send({
           ok: false,
           error: {
@@ -460,7 +508,8 @@ export async function registerAdaptersRoutes(
   }
 
   // GET /api/v1/adapters/embeddings/daily-stats
-  // Returns daily aggregated Embeddings statistics for time-series visualization
+  // Returns time-bucketed aggregated Embeddings statistics for time-series visualization
+  // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const embeddingsDailyStatsPaths = resolvePaths(basePath, '/adapters/embeddings/daily-stats');
   for (const path of embeddingsDailyStatsPaths) {
     fastify.get(path, async (request, reply) => {
@@ -478,29 +527,24 @@ export async function registerAdaptersRoutes(
 
       try {
         const dateRange = extractDateRange(request.query);
+        const statsOptions = extractStatsOptions(request.query);
 
         const dailyStats = await analytics.getDailyStats({
           type: ['embeddings.embed.completed', 'embeddings.embedBatch.completed'],
           from: dateRange.from,
           to: dateRange.to,
-          limit: 10000,
+          limit: 50000,
+          ...statsOptions,
         });
 
-        return reply.send({
-          ok: true,
-          data: dailyStats,
-        });
+        return reply.send({ ok: true, data: dailyStats });
       } catch (error) {
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
-              message: error.message,
-            },
+            error: { code: 'INVALID_DATE_RANGE', message: error.message },
           });
         }
-
         return reply.code(500).send({
           ok: false,
           error: {
@@ -533,26 +577,32 @@ export async function registerAdaptersRoutes(
         // Extract and validate date range
         const dateRange = extractDateRange(request.query);
 
-        const completedEvents = await analytics.getEvents({
-          type: ['embeddings.embed.completed', 'embeddings.embedBatch.completed'],
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 10000,
-        });
+        const completedEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: ['embeddings.embed.completed', 'embeddings.embedBatch.completed'],
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
-        const errorEvents = await analytics.getEvents({
-          type: ['embeddings.embed.error', 'embeddings.embedBatch.error'],
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000,
-        });
+        const errorEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: ['embeddings.embed.error', 'embeddings.embedBatch.error'],
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
         const stats = {
-          totalRequests: completedEvents.events.length,
+          totalRequests: completedEvents.length,
           totalTextLength: 0,
           totalCost: 0,
           costPer1KChars: 0, // Enhanced: Cost efficiency metric
-          errors: errorEvents.events.length,
+          errors: errorEvents.length,
           // Enhanced: Error breakdown by type
           errorBreakdown: {
             timeout: 0,
@@ -575,7 +625,7 @@ export async function registerAdaptersRoutes(
         let totalBatchSize = 0;
         const durations: number[] = [];
 
-        for (const event of completedEvents.events) {
+        for (const event of completedEvents) {
           const props = getEventData(event);
 
           const textLength = Number(props.textLength || props.totalTextLength || 0);
@@ -617,7 +667,7 @@ export async function registerAdaptersRoutes(
         }
 
         // Process error events for breakdown
-        for (const event of errorEvents.events) {
+        for (const event of errorEvents) {
           const props = getEventData(event);
           const errorType = String(props.errorType || props.errorCode || '').toLowerCase();
           const errorMessage = String(props.error || props.message || '').toLowerCase();
@@ -662,7 +712,8 @@ export async function registerAdaptersRoutes(
   }
 
   // GET /api/v1/adapters/vectorstore/daily-stats
-  // Returns daily aggregated VectorStore statistics for time-series visualization
+  // Returns time-bucketed aggregated VectorStore statistics for time-series visualization
+  // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const vectorstoreDailyStatsPaths = resolvePaths(basePath, '/adapters/vectorstore/daily-stats');
   for (const path of vectorstoreDailyStatsPaths) {
     fastify.get(path, async (request, reply) => {
@@ -680,29 +731,24 @@ export async function registerAdaptersRoutes(
 
       try {
         const dateRange = extractDateRange(request.query);
+        const statsOptions = extractStatsOptions(request.query);
 
         const dailyStats = await analytics.getDailyStats({
           type: ['vectorstore.search.completed', 'vectorstore.upsert.completed', 'vectorstore.delete.completed'],
           from: dateRange.from,
           to: dateRange.to,
-          limit: 10000,
+          limit: 50000,
+          ...statsOptions,
         });
 
-        return reply.send({
-          ok: true,
-          data: dailyStats,
-        });
+        return reply.send({ ok: true, data: dailyStats });
       } catch (error) {
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
-              message: error.message,
-            },
+            error: { code: 'INVALID_DATE_RANGE', message: error.message },
           });
         }
-
         return reply.code(500).send({
           ok: false,
           error: {
@@ -735,31 +781,40 @@ export async function registerAdaptersRoutes(
         // Extract and validate date range
         const dateRange = extractDateRange(request.query);
 
-        const searchEvents = await analytics.getEvents({
-          type: 'vectorstore.search.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 10000,
-        });
+        const searchEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'vectorstore.search.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
-        const upsertEvents = await analytics.getEvents({
-          type: 'vectorstore.upsert.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000,
-        });
+        const upsertEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'vectorstore.upsert.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
-        const deleteEvents = await analytics.getEvents({
-          type: 'vectorstore.delete.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000,
-        });
+        const deleteEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'vectorstore.delete.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
         const stats = {
-          searchQueries: searchEvents.events.length,
-          upsertOperations: upsertEvents.events.length,
-          deleteOperations: deleteEvents.events.length,
+          searchQueries: searchEvents.length,
+          upsertOperations: upsertEvents.length,
+          deleteOperations: deleteEvents.length,
           avgSearchDuration: 0,
           // Enhanced: Search latency percentiles
           p50SearchDuration: 0,
@@ -776,7 +831,7 @@ export async function registerAdaptersRoutes(
         let totalResultsCount = 0;
         const searchDurations: number[] = [];
 
-        for (const event of searchEvents.events) {
+        for (const event of searchEvents) {
           const props = getEventData(event);
 
           const duration = Number(props.durationMs || 0);
@@ -805,12 +860,12 @@ export async function registerAdaptersRoutes(
           stats.p99SearchDuration = sorted[p99Index] ?? 0;
         }
 
-        for (const event of upsertEvents.events) {
+        for (const event of upsertEvents) {
           const props = getEventData(event);
           stats.totalVectorsUpserted += Number(props.vectorCount || 0);
         }
 
-        for (const event of deleteEvents.events) {
+        for (const event of deleteEvents) {
           const props = getEventData(event);
           stats.totalVectorsDeleted += Number(props.idsCount || 0);
         }
@@ -841,7 +896,8 @@ export async function registerAdaptersRoutes(
   }
 
   // GET /api/v1/adapters/cache/daily-stats
-  // Returns daily aggregated Cache statistics for time-series visualization
+  // Returns time-bucketed aggregated Cache statistics for time-series visualization
+  // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const cacheDailyStatsPaths = resolvePaths(basePath, '/adapters/cache/daily-stats');
   for (const path of cacheDailyStatsPaths) {
     fastify.get(path, async (request, reply) => {
@@ -859,29 +915,24 @@ export async function registerAdaptersRoutes(
 
       try {
         const dateRange = extractDateRange(request.query);
+        const statsOptions = extractStatsOptions(request.query);
 
         const dailyStats = await analytics.getDailyStats({
           type: ['cache.get.hit', 'cache.get.miss', 'cache.set.completed'],
           from: dateRange.from,
           to: dateRange.to,
-          limit: 10000,
+          limit: 50000,
+          ...statsOptions,
         });
 
-        return reply.send({
-          ok: true,
-          data: dailyStats,
-        });
+        return reply.send({ ok: true, data: dailyStats });
       } catch (error) {
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
-              message: error.message,
-            },
+            error: { code: 'INVALID_DATE_RANGE', message: error.message },
           });
         }
-
         return reply.code(500).send({
           ok: false,
           error: {
@@ -914,47 +965,56 @@ export async function registerAdaptersRoutes(
         // Extract and validate date range
         const dateRange = extractDateRange(request.query);
 
-        const hitEvents = await analytics.getEvents({
-          type: 'cache.get.hit',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 10000
-        });
-        const missEvents = await analytics.getEvents({
-          type: 'cache.get.miss',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 10000
-        });
-        const setEvents = await analytics.getEvents({
-          type: 'cache.set.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000
-        });
+        const hitEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'cache.get.hit',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
+        const missEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'cache.get.miss',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
+        const setEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'cache.set.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
-        const totalGets = hitEvents.events.length + missEvents.events.length;
-        const hitRate = totalGets > 0 ? (hitEvents.events.length / totalGets) * 100 : 0;
+        const totalGets = hitEvents.length + missEvents.length;
+        const hitRate = totalGets > 0 ? (hitEvents.length / totalGets) * 100 : 0;
 
         const stats = {
           totalGets,
-          hits: hitEvents.events.length,
-          misses: missEvents.events.length,
+          hits: hitEvents.length,
+          misses: missEvents.length,
           hitRate,
-          sets: setEvents.events.length,
+          sets: setEvents.length,
           avgGetDuration: 0,
           avgSetDuration: 0,
         };
 
         let totalGetDuration = 0;
-        for (const event of [...hitEvents.events, ...missEvents.events]) {
+        for (const event of [...hitEvents, ...missEvents]) {
           const props = getEventData(event);
           totalGetDuration += Number(props.durationMs || 0);
         }
         stats.avgGetDuration = totalGets > 0 ? totalGetDuration / totalGets : 0;
 
         let totalSetDuration = 0;
-        for (const event of setEvents.events) {
+        for (const event of setEvents) {
           const props = getEventData(event);
           totalSetDuration += Number(props.durationMs || 0);
         }
@@ -986,7 +1046,8 @@ export async function registerAdaptersRoutes(
   }
 
   // GET /api/v1/adapters/storage/daily-stats
-  // Returns daily aggregated Storage statistics for time-series visualization
+  // Returns time-bucketed aggregated Storage statistics for time-series visualization
+  // Query params: from, to, groupBy (hour|day|week|month), breakdownBy (dot-path), metrics (csv)
   const storageDailyStatsPaths = resolvePaths(basePath, '/adapters/storage/daily-stats');
   for (const path of storageDailyStatsPaths) {
     fastify.get(path, async (request, reply) => {
@@ -1004,29 +1065,24 @@ export async function registerAdaptersRoutes(
 
       try {
         const dateRange = extractDateRange(request.query);
+        const statsOptions = extractStatsOptions(request.query);
 
         const dailyStats = await analytics.getDailyStats({
           type: ['storage.read.completed', 'storage.write.completed', 'storage.delete.completed'],
           from: dateRange.from,
           to: dateRange.to,
-          limit: 10000,
+          limit: 50000,
+          ...statsOptions,
         });
 
-        return reply.send({
-          ok: true,
-          data: dailyStats,
-        });
+        return reply.send({ ok: true, data: dailyStats });
       } catch (error) {
         if (error instanceof Error && error.message.includes('Invalid')) {
           return reply.code(400).send({
             ok: false,
-            error: {
-              code: 'INVALID_DATE_RANGE',
-              message: error.message,
-            },
+            error: { code: 'INVALID_DATE_RANGE', message: error.message },
           });
         }
-
         return reply.code(500).send({
           ok: false,
           error: {
@@ -1059,29 +1115,38 @@ export async function registerAdaptersRoutes(
         // Extract and validate date range
         const dateRange = extractDateRange(request.query);
 
-        const readEvents = await analytics.getEvents({
-          type: 'storage.read.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 10000
-        });
-        const writeEvents = await analytics.getEvents({
-          type: 'storage.write.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000
-        });
-        const deleteEvents = await analytics.getEvents({
-          type: 'storage.delete.completed',
-          from: dateRange.from,
-          to: dateRange.to,
-          limit: 1000
-        });
+        const readEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'storage.read.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
+        const writeEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'storage.write.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
+        const deleteEvents = await fetchAllEventsBatched(
+          analytics,
+          {
+            type: 'storage.delete.completed',
+            from: dateRange.from,
+            to: dateRange.to,
+          },
+          fastify
+        );
 
         const stats = {
-          readOperations: readEvents.events.length,
-          writeOperations: writeEvents.events.length,
-          deleteOperations: deleteEvents.events.length,
+          readOperations: readEvents.length,
+          writeOperations: writeEvents.length,
+          deleteOperations: deleteEvents.length,
           totalBytesRead: 0,
           totalBytesWritten: 0,
           avgReadDuration: 0,
@@ -1089,7 +1154,7 @@ export async function registerAdaptersRoutes(
         };
 
         let totalReadDuration = 0;
-        for (const event of readEvents.events) {
+        for (const event of readEvents) {
           const props = getEventData(event);
           stats.totalBytesRead += Number(props.bytesRead || 0);
           totalReadDuration += Number(props.durationMs || 0);
@@ -1097,7 +1162,7 @@ export async function registerAdaptersRoutes(
         stats.avgReadDuration = stats.readOperations > 0 ? totalReadDuration / stats.readOperations : 0;
 
         let totalWriteDuration = 0;
-        for (const event of writeEvents.events) {
+        for (const event of writeEvents) {
           const props = getEventData(event);
           stats.totalBytesWritten += Number(props.bytesWritten || 0);
           totalWriteDuration += Number(props.durationMs || 0);

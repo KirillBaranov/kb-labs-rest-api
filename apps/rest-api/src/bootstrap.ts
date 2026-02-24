@@ -172,10 +172,18 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   await initializePlatform(repoRoot);
 
   // Now we can use platform.logger (configured from kb.config.json)
+  const startupRequestId = `rest-startup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+  const startupTraceId = randomUUID();
+  const startupSpanId = randomUUID();
   const bootstrapLogger = platform.logger.child({
     layer: 'rest',
     service: 'bootstrap',
-    traceId: randomUUID(),
+    requestId: startupRequestId,
+    reqId: startupRequestId,
+    traceId: startupTraceId,
+    spanId: startupSpanId,
+    invocationId: startupSpanId,
+    executionId: startupSpanId,
   });
 
   if (diagnostics.length > 0) {

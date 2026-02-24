@@ -6,13 +6,57 @@
  */
 
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
-import { initPlatform, platform, type PlatformConfig } from '@kb-labs/core-runtime';
+import {
+  initPlatform,
+  platform,
+  type PlatformConfig,
+  type PlatformLifecycleContext,
+  type PlatformLifecycleHooks,
+  type PlatformLifecyclePhase,
+} from '@kb-labs/core-runtime';
 import { findNearestConfig, readJsonWithDiagnostics } from '@kb-labs/core-config';
 
 /**
  * Whether platform has been initialized.
  */
 let _initialized = false;
+const REST_LIFECYCLE_HOOK_ID = 'rest-api';
+let _hooksRegistered = false;
+
+function ensureLifecycleHooksRegistered(): void {
+  if (_hooksRegistered) {
+    return;
+  }
+
+  const hooks: PlatformLifecycleHooks = {
+    onStart: (ctx: PlatformLifecycleContext) => {
+      console.log('[platform] lifecycle:start', {
+        app: 'rest',
+        cwd: ctx.cwd,
+        isChildProcess: ctx.isChildProcess,
+      });
+    },
+    onReady: (ctx: PlatformLifecycleContext) => {
+      platform.logger.info('Platform lifecycle ready', {
+        app: 'rest',
+        durationMs: ctx.metadata?.durationMs,
+      });
+    },
+    onShutdown: () => {
+      platform.logger.info('Platform lifecycle shutdown', { app: 'rest' });
+    },
+    onError: (error: unknown, phase: PlatformLifecyclePhase) => {
+      console.warn('[platform] lifecycle:error', {
+        app: 'rest',
+        phase,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    },
+  };
+
+  platform.registerLifecycleHooks(REST_LIFECYCLE_HOOK_ID, hooks);
+  _hooksRegistered = true;
+}
 
 /**
  * Initialize platform from kb.config.json.
@@ -22,6 +66,8 @@ let _initialized = false;
  * @param cwd - Workspace root directory to search for kb.config.json
  */
 export async function initializePlatform(cwd: string = process.cwd()): Promise<void> {
+  ensureLifecycleHooksRegistered();
+
   if (_initialized) {
     // Can't use platform.logger yet - not initialized
     console.log('[platform] Already initialized, skipping');
@@ -108,4 +154,3 @@ export function getPlatformServices(): PlatformServices {
     eventBus: platform.eventBus,
   };
 }
-
