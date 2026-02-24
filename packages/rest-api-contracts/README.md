@@ -1,182 +1,48 @@
 # @kb-labs/api-contracts
 
-Shared API contracts for KB Labs REST/CLI/Studio surfaces.
+Shared API contracts for KB Labs REST, CLI, and Studio surfaces.
 
-## Vision & Purpose
+## Overview
 
-**@kb-labs/api-contracts** provides shared API contracts for KB Labs REST/CLI/Studio surfaces. It includes error codes, envelopes, system types, and ready state definitions.
+Provides Zod schemas and TypeScript types for consistent API shapes across all KB Labs services.
 
-### Core Goals
+## API Reference
 
-- **Error Codes**: Standardized error codes for API responses
-- **Envelopes**: Response envelope types
-- **System Types**: System-level type definitions
-- **Ready State**: Ready state definitions
+### Error Codes
 
-## Package Status
+- `ErrorCode` — standardized error code enum
+- `getErrorCode(error)` — extract error code from an error value
 
-- **Version**: 0.1.0
-- **Stage**: Stable
-- **Status**: Production Ready ✅
+### Response Envelopes
 
-## Architecture
+- `SuccessEnvelope<T>` — `{ ok: true, data: T, meta }`
+- `ErrorEnvelope` — `{ ok: false, error: { code, message, details?, traceId? }, meta }`
 
-### High-Level Overview
+### System Types
 
-```
-API Contracts
-    │
-    ├──► Error Codes
-    ├──► Envelopes
-    ├──► System Types
-    └──► Ready State
-```
+- `SystemInfo` — system information shape
+- `SystemHealth` — health snapshot shape
+- `ReadyState` — readiness probe shape
+- `isReady(state)` — type guard for readiness
 
-### Key Components
-
-1. **Error Codes** (`error-code.ts`): Standardized error codes
-2. **Envelopes** (`envelopes.ts`): Response envelope types
-3. **System Types** (`system.ts`): System-level type definitions
-4. **Ready State** (`ready.ts`): Ready state definitions
-
-## ✨ Features
-
-- **Error Codes**: Standardized error codes for API responses
-- **Envelopes**: Response envelope types for consistent API responses
-- **System Types**: System-level type definitions
-- **Ready State**: Ready state definitions
-
-## 📦 API Reference
-
-### Main Exports
-
-#### Error Codes
-
-- `ErrorCode`: Error code enum
-- `getErrorCode`: Get error code from error
-
-#### Envelopes
-
-- `ErrorEnvelope`: Error envelope type
-- `SuccessEnvelope`: Success envelope type
-
-#### System Types
-
-- `SystemInfo`: System information type
-- `SystemHealth`: System health type
-
-#### Ready State
-
-- `ReadyState`: Ready state type
-- `isReady`: Check if system is ready
-
-## 🔧 Configuration
-
-### Configuration Options
-
-No configuration needed - pure type definitions.
-
-## 🔗 Dependencies
-
-### Runtime Dependencies
-
-- `zod` (`^4.1.5`): Schema validation
-
-### Development Dependencies
-
-- `@kb-labs/devkit` (`workspace:*`): DevKit presets
-- `@types/node` (`^24.3.3`): Node.js types
-- `tsup` (`^8.5.0`): TypeScript bundler
-- `typescript` (`^5.6.3`): TypeScript compiler
-- `vitest` (`^3.2.4`): Test runner
-
-## 🧪 Testing
-
-### Test Structure
-
-No tests currently.
-
-### Test Coverage
-
-- **Current Coverage**: ~50%
-- **Target Coverage**: 90%
-
-## 📈 Performance
-
-### Performance Characteristics
-
-- **Time Complexity**: O(1) for all operations
-- **Space Complexity**: O(1)
-- **Bottlenecks**: None
-
-## 🔒 Security
-
-### Security Considerations
-
-- **Type Safety**: TypeScript type safety
-
-### Known Vulnerabilities
-
-- None
-
-## 🐛 Known Issues & Limitations
-
-### Known Issues
-
-- None currently
-
-### Limitations
-
-- **Error Codes**: Fixed error codes
-
-### Future Improvements
-
-- **More Error Codes**: Additional error codes
-
-## 🔄 Migration & Breaking Changes
-
-### Migration from Previous Versions
-
-No breaking changes in current version (0.1.0).
-
-### Breaking Changes in Future Versions
-
-- None planned
-
-## 📚 Examples
-
-### Example 1: Use Error Codes
+## Usage
 
 ```typescript
-import { ErrorCode } from '@kb-labs/api-contracts';
+import { ErrorCode, SuccessEnvelope, ErrorEnvelope } from '@kb-labs/api-contracts';
 
-const error = {
-  code: ErrorCode.INTERNAL_ERROR,
-  message: 'Something went wrong',
-};
-```
-
-### Example 2: Use Envelopes
-
-```typescript
-import { ErrorEnvelope, SuccessEnvelope } from '@kb-labs/api-contracts';
-
-const errorEnvelope: ErrorEnvelope = {
-  ok: false,
-  error: { code: 'ERROR', message: 'Error message' },
-};
-
-const successEnvelope: SuccessEnvelope = {
+const success: SuccessEnvelope<{ id: string }> = {
   ok: true,
-  data: { result: 'success' },
+  data: { id: '01K...' },
+  meta: { requestId: '01K...', durationMs: 12, apiVersion: '1.0.0' },
+};
+
+const error: ErrorEnvelope = {
+  ok: false,
+  error: { code: ErrorCode.INTERNAL_ERROR, message: 'Something went wrong' },
+  meta: { requestId: '01K...', durationMs: 5, apiVersion: '1.0.0' },
 };
 ```
 
-## 🤝 Contributing
+## License
 
-See [CONTRIBUTING.md](../../CONTRIBUTING.md) for development guidelines.
-
-## 📄 License
-
-MIT © KB Labs
-
+KB Public License v1.1 © KB Labs
