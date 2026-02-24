@@ -7,28 +7,25 @@ This document defines the documentation standards for **KB Labs REST API**. This
 
 ## Project-Specific Customizations
 
-KB Labs REST API provides a production-ready HTTP layer over KB Labs CLI tools. Documentation should focus on:
+KB Labs REST API provides a plugin-powered HTTP gateway for the KB Labs platform. Documentation should focus on:
 
 - REST API endpoints and contracts
-- Job queue and async execution
-- Server-Sent Events (SSE) for real-time updates
-- Security and authentication
-- Integration examples
+- Plugin discovery and dynamic route mounting
+- Server-Sent Events (SSE) for real-time registry updates
+- Security, CORS, and rate limiting configuration
+- Integration examples and deployment
 
 ## Project Documentation Structure
 
 ```
 docs/
 ├── DOCUMENTATION.md       # This standard (REQUIRED)
-├── architecture.md         # System architecture
-├── examples.md             # API usage examples
-├── docker.md               # Docker deployment
-├── compatibility-check.md   # Compatibility checking
-├── completion-checklist.md  # Feature checklist
-├── features.md              # Feature documentation
-└── adr/                    # Architecture Decision Records
+├── ARCHITECTURE.md        # System architecture
+├── EXAMPLES.md            # API usage examples
+├── DOCKER.md              # Docker deployment guide
+└── adr/                   # Architecture Decision Records
     ├── 0000-template.md   # ADR template
-    └── *.md                # ADR files
+    └── *.md               # ADR files
 ```
 
 ## Required Documentation
@@ -76,7 +73,7 @@ This project links to:
 
 ---
 
-**Last Updated:** 2025-11-03  
+**Last Updated:** 2026-02-24
 **Standard Version:** 1.0 (following KB Labs ecosystem standard)  
 **See Main Standard:** [KB Labs Documentation Standard](https://github.com/KirillBaranov/kb-labs/blob/main/docs/DOCUMENTATION.md)
 

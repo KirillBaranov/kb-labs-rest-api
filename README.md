@@ -34,7 +34,7 @@ pnpm build
 cd apps/rest-api
 pnpm dev
 
-# Server will start on http://localhost:3001
+# Server will start on http://localhost:5050
 # API base path: /api/v1
 ```
 
@@ -85,7 +85,7 @@ CLI producers persist `kb.registry/1` snapshots to the same Redis instance and p
 #### Health Snapshot (`GET /health`)
 
 ```bash
-curl http://localhost:3001/health
+curl http://localhost:5050/health
 ```
 
 Response (schema `kb.health/1`):
@@ -148,7 +148,7 @@ Response (schema `kb.health/1`):
 #### Readiness Probe (`GET /ready`)
 
 ```bash
-curl -i http://localhost:3001/ready
+curl -i http://localhost:5050/ready
 ```
 
 Possible responses:
@@ -164,19 +164,19 @@ Possible responses:
 #### Plugin Registry
 
 ```bash
-curl http://localhost:3001/api/v1/plugins/registry
+curl http://localhost:5050/api/v1/plugins/registry
 ```
 
 #### Aggregated OpenAPI
 
 ```bash
-curl http://localhost:3001/openapi.json
+curl http://localhost:5050/openapi.json
 ```
 
 #### Prometheus Metrics
 
 ```bash
-curl http://localhost:3001/api/v1/metrics
+curl http://localhost:5050/api/v1/metrics
 ```
 
 Includes per-route latency histograms (`http_request_duration_ms_bucket`) and plugin mount counters (`kb_plugins_mount_total`, `kb_plugins_mount_failed`).
@@ -285,7 +285,7 @@ kb-labs-rest-api/
 
 The REST API server can be configured via environment variables:
 
-- **PORT**: Server port (default: 3001)
+- **PORT**: Server port (default: 5050)
 - **KB_REST_BASE_PATH**: API base path (default: `/api/v1`)
 - **KB_REST_API_VERSION**: API version (default: `1.0.0`)
 - **KB_REST_CORS_ORIGINS**: Comma-separated list of allowed CORS origins
@@ -298,40 +298,14 @@ The REST API server can be configured via environment variables:
 - **KB_REST_REDIS_NAMESPACE**: Redis namespace/prefix for keys and channels (default: `kb`)
 - **KB_REST_MOCK_MODE**: Enable mock mode globally (true | false)
 
-### Job Queue Configuration
-
-Configure retry policies and cleanup in `kb-labs.config.json`:
-
-```json
-{
-  "restApi": {
-    "queue": {
-      "retry": {
-        "maxRetries": 3,
-        "backoff": {
-          "type": "exponential",
-          "delay": 1000
-        }
-      },
-      "cleanup": {
-        "enabled": true,
-        "intervalSec": 3600,
-        "ttlSec": 86400,
-        "cleanupArtifacts": true
-      }
-    }
-  }
-}
-```
-
 ## 📚 API Documentation
 
 ### Base URL
 
-- **HTTP host**: `http://localhost:3001`
+- **HTTP host**: `http://localhost:5050`
 - **API base path**: `/api/v1`
-- **Aggregated OpenAPI**: `http://localhost:3001/openapi.json`
-- **Per-plugin OpenAPI**: `http://localhost:3001/openapi/{pluginId}`
+- **Aggregated OpenAPI**: `http://localhost:5050/openapi.json`
+- **Per-plugin OpenAPI**: `http://localhost:5050/openapi/{pluginId}`
 
 ### Response Format
 
@@ -393,13 +367,6 @@ All responses use an envelope format:
 
 Each plugin contributes its own REST handlers and base path via its manifest. Inspect `/api/v1/plugins/registry` for manifest metadata and mounted routes.
 
-## 🔒 Security
-
-- **Security Headers**: HSTS, X-Frame-Options, X-Content-Type-Options, etc.
-- **CORS**: Configurable profiles (dev, preview, prod)
-- **Rate Limiting**: Per-IP and per-route limits
-- **Input Validation**: Zod schema validation for all requests
-
 ## 📊 Observability
 
 - **Structured Logging**: Pino logger with correlation IDs
@@ -417,11 +384,9 @@ Each plugin contributes its own REST handlers and base path via its manifest. In
 - [Architecture Decisions](./docs/adr/) - ADRs for this project
 
 **Guides:**
-- [Architecture](./docs/architecture.md) — System design and architecture
-- [Examples](./docs/examples.md) — API usage examples
-- [Docker Guide](./docs/docker.md) — Docker deployment guide
-- [Compatibility Check](./docs/compatibility-check.md) — CLI → REST API → Studio compatibility
-- [Completion Checklist](./docs/completion-checklist.md) — Feature completion status
+- [Architecture](./docs/ARCHITECTURE.md) — System design and architecture
+- [Examples](./docs/EXAMPLES.md) — API usage examples
+- [Docker Guide](./docs/DOCKER.md) — Docker deployment guide
 
 **Integration:**
 - [API Contracts](https://github.com/KirillBaranov/kb-labs-api-contracts/blob/main/packages/api-contracts/README.md) — Shared API contracts
@@ -448,23 +413,8 @@ See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and contribu
 
 ## 📄 License
 
-MIT © KB Labs
+KB Public License v1.1 © KB Labs
 
 ---
 
 **See [CONTRIBUTING.md](./CONTRIBUTING.md) for development guidelines and contribution process.**
-
-
-## License
-
-KB Public License v1.1 - see [LICENSE](LICENSE) for details.
-
-This is open source software with some restrictions on:
-- Offering as a hosted service (SaaS/PaaS)
-- Creating competing platform products
-
-For commercial licensing inquiries: contact@kblabs.dev
-
-**User Guides:**
-- [English Guide](../LICENSE-GUIDE.en.md)
-- [Русское руководство](../LICENSE-GUIDE.ru.md)
