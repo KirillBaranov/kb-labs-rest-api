@@ -8,5 +8,11 @@ export default [
       '**/vitest.config.ts',
       '**/*.vue'
     ]
-  }
+  },
+  {
+    // REST API handles HTTP requests — await-in-loop matters here
+    rules: {
+      'no-await-in-loop': 'warn',
+    },
+  },
 ];
