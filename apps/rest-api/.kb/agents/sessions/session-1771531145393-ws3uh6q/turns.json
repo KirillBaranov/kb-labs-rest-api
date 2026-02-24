@@ -1,0 +1,42 @@
+[
+  {
+    "id": "turn-agent-1771533845693-hzyxc",
+    "type": "assistant",
+    "sequence": 1,
+    "startedAt": "2026-02-19T20:44:06.779Z",
+    "completedAt": "2026-02-19T20:44:12.233Z",
+    "status": "completed",
+    "steps": [
+      {
+        "type": "text",
+        "id": "step-1",
+        "timestamp": "2026-02-19T20:44:11.108Z",
+        "content": "Мы обсуждали проект KB Labs, его структуру, команды и инструменты для поиска и редактирования кода. Также вы спрашивали о деталях kb-labs-devkit, скриптах в проекте и конкретном файле show-baseline.cjs. Если вам нужно больше информации или есть другие вопросы, дайте знать!",
+        "role": "assistant"
+      }
+    ],
+    "metadata": {
+      "agentId": "agent-1771533845693-hzyxc"
+    }
+  },
+  {
+    "id": "turn-agent-1771534107175-zip5m",
+    "type": "assistant",
+    "sequence": 1,
+    "startedAt": "2026-02-19T20:48:28.309Z",
+    "completedAt": "2026-02-19T20:48:34.105Z",
+    "status": "completed",
+    "steps": [
+      {
+        "type": "text",
+        "id": "step-1",
+        "timestamp": "2026-02-19T20:48:32.698Z",
+        "content": "Мы обсуждали проект KB Labs, его структуру, команды и инструменты для поиска и редактирования кода. Также говорили о деталях kb-labs-devkit и скриптах в проекте. Если у вас есть конкретные вопросы или темы для обсуждения, дайте знать!",
+        "role": "assistant"
+      }
+    ],
+    "metadata": {
+      "agentId": "agent-1771534107175-zip5m"
+    }
+  }
+]
