@@ -68,3 +68,5 @@ analytics/
 # DevKit provenance
 .kb/devkit/tmp/.npmrc
 .kb/cache
+apps/rest-api/.kb/database/*.sqlite-wal
+apps/rest-api/.kb/database/*.sqlite-shm
