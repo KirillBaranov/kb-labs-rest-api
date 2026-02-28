@@ -46,7 +46,7 @@ export async function registerPluginRoutes(
   readiness?: ReadinessState
 ): Promise<void> {
   const gatewayTimeoutMs = config.timeouts?.requestTimeout ?? 30_000;
-  // Stats will be computed from mount results to avoid race conditions in parallel execution
+  // Stats aggregated from sequential mount results
   const stats = {
     mountedRoutes: 0,
     mountedChannels: 0,
@@ -85,6 +85,19 @@ export async function registerPluginRoutes(
     const snapshot = cliApi.snapshot();
     const manifests = extractSnapshotManifests(snapshot);
 
+    // Log discovery summary
+    platform.logger.info({
+      totalManifests: manifests.length,
+      rev: snapshot.rev,
+      partial: snapshot.partial,
+      stale: snapshot.stale,
+      plugins: manifests.map(e => ({
+        id: e.manifest.id,
+        restRoutes: e.manifest.rest?.routes?.length ?? 0,
+        wsChannels: e.manifest.ws?.channels?.length ?? 0,
+      })),
+    }, 'Plugin discovery summary');
+
     if (snapshot.partial || snapshot.stale) {
       platform.logger.warn({
         partial: snapshot.partial,
@@ -96,221 +109,64 @@ export async function registerPluginRoutes(
     // Use platform's unified ExecutionBackend (initialized in bootstrap.ts)
     const backend = platform.executionBackend;
 
-    // Prepare mount tasks for parallel execution (REST + WebSocket)
-    const mountTasks = manifests
+    // Filter plugins that have routes or channels to mount
+    const mountableManifests = manifests
       .filter(entry =>
         (entry.manifest.rest?.routes && entry.manifest.rest.routes.length > 0) ||
         (entry.manifest.ws?.channels && entry.manifest.ws.channels.length > 0)
-      )
-      .map(async (entry) => {
-        const { manifest, pluginRoot } = entry;
+      );
 
-        // Validate routes first (synchronous checks)
-        const restValidationErrors: string[] = [];
-        if (manifest.rest?.routes) {
-          const manifestDir = pluginRoot;
-          for (const route of manifest.rest.routes) {
-            const handlerRef = route.handler;
-            const handlerFile = handlerRef.split('#')[0];
+    platform.logger.info({
+      mountable: mountableManifests.length,
+      skipped: manifests.length - mountableManifests.length,
+      mountablePlugins: mountableManifests.map(e => e.manifest.id),
+    }, 'Plugins selected for route mounting');
 
-            if (!handlerFile) {
-              restValidationErrors.push(
-                `Route ${route.method} ${route.path}: Invalid handler reference "${handlerRef}"`
-              );
-              continue;
-            }
-
-            const handlerPath = path.resolve(manifestDir, handlerFile);
-            try {
-              await fs.access(handlerPath);
-            } catch {
-              restValidationErrors.push(
-                `Route ${route.method} ${route.path}: Handler file not found: ${handlerPath}`
-              );
-            }
-          }
-        }
-
-        if (restValidationErrors.length > 0) {
-          platform.logger.warn({
-            plugin: `${manifest.id}@${manifest.version}`,
-            pluginRoot,
-            remediation: 'Verify REST handler file and export exist',
-            errors: restValidationErrors,
-          }, 'REST validation errors found, will skip problematic routes but continue mounting others');
-          // Filter out routes with validation errors
-          const errorPaths = new Set(restValidationErrors.map((error) => {
-            const match = error.match(/Route\s+(\w+)\s+([^\s:]+)/);
-            return match ? `${match[1]} ${match[2]}` : null;
-          }).filter(Boolean));
-
-          const validRoutes = manifest.rest!.routes!.filter((route) => {
-            const routeKey = `${route.method} ${route.path}`;
-            return !errorPaths.has(routeKey);
-          });
-
-          if (validRoutes.length === 0) {
-            platform.logger.error('All routes failed validation, skipping plugin', undefined, {
-              plugin: `${manifest.id}@${manifest.version}`,
-              pluginRoot,
-              errors: restValidationErrors,
+    // ── Phase 1: Batch-validate all handler files in one I/O pass ──
+    // Collect all handler file paths across all plugins, then validate in a single Promise.all()
+    // This avoids interleaved fs.access() calls that caused race conditions with parallel mounting.
+    const handlerChecks: Array<{ key: string; filePath: string }> = [];
+    for (const entry of mountableManifests) {
+      if (entry.manifest.rest?.routes) {
+        for (const route of entry.manifest.rest.routes) {
+          const handlerFile = route.handler.split('#')[0];
+          if (handlerFile) {
+            const handlerPath = path.resolve(entry.pluginRoot, handlerFile);
+            handlerChecks.push({
+              key: `${entry.manifest.id}::${route.method} ${route.path}`,
+              filePath: handlerPath,
             });
-            return {
-              success: false,
-              pluginId: manifest.id,
-              error: true,
-              routesCount: 0,
-              failureError: summarizeValidationErrors(restValidationErrors),
-            };
           }
-
-          // Replace routes with only valid ones
-          manifest.rest!.routes = validRoutes;
-          platform.logger.info({
-            plugin: `${manifest.id}@${manifest.version}`,
-            totalRoutes: manifest.rest!.routes.length + restValidationErrors.length,
-            validRoutes: validRoutes.length,
-            skippedRoutes: restValidationErrors.length,
-          }, 'Filtered routes, mounting valid ones');
         }
+      }
+    }
 
+    const handlerAccessResults = await Promise.all(
+      handlerChecks.map(async (check) => {
         try {
-          const start = performance.now();
-          // Handle both /v1/plugins/xxx and /plugins/xxx formats
-          // Ensure basePath doesn't already contain /api prefix to avoid duplication
-          let pluginBasePath: string;
-          if (manifest.rest?.basePath) {
-            if (manifest.rest.basePath.startsWith('/api/')) {
-              // Already has /api prefix, use as-is
-              pluginBasePath = manifest.rest.basePath;
-            } else if (manifest.rest.basePath.startsWith('/v1/')) {
-              // Old format: /v1/plugins/xxx → /api/v1/plugins/xxx
-              pluginBasePath = manifest.rest.basePath.replace(/^\/v1/, config.basePath);
-            } else {
-              // New format: /plugins/xxx → /api/v1/plugins/xxx
-              pluginBasePath = `${config.basePath}${manifest.rest.basePath}`;
-            }
-          } else {
-            // No basePath, use plugin ID
-            pluginBasePath = `${config.basePath}/plugins/${manifest.id}`;
-          }
-
-          platform.logger.info({
-            plugin: `${manifest.id}@${manifest.version}`,
-            configBasePath: config.basePath,
-            manifestBasePath: manifest.rest?.basePath,
-            pluginBasePath,
-            pluginRoot,
-            routes: manifest.rest?.routes?.length ?? 0,
-          }, 'Mounting plugin routes');
-
-          // Use new plugin-execution API
-          await mountRoutes(server, manifest, {
-            backend,
-            pluginRoot,
-            workspaceRoot,
-            basePath: pluginBasePath,
-            defaultTimeoutMs: gatewayTimeoutMs,
-          });
-
-          const duration = performance.now() - start;
-          const routesCount = manifest.rest?.routes?.length ?? 0;
-
-          // Register route budgets for metrics
-          for (const route of manifest.rest?.routes ?? []) {
-            metricsCollector.registerRouteBudget(
-              route.method,
-              `${pluginBasePath}${route.path}`,
-              route.timeoutMs ?? gatewayTimeoutMs,
-              manifest.id
-            );
-          }
-
-          mountMetrics.recordSuccess(manifest.id, routesCount, duration);
-          platform.logger.info({
-            plugin: `${manifest.id}@${manifest.version}`,
-            durationMs: Number(duration.toFixed(2)),
-          }, 'Successfully mounted plugin routes');
-
-          // Mount WebSocket channels if present
-          let channelsCount = 0;
-          if (manifest.ws?.channels && manifest.ws.channels.length > 0) {
-            try {
-              const wsStart = performance.now();
-              const wsBasePath = manifest.ws.basePath || `/v1/ws/plugins/${manifest.id}`;
-
-              platform.logger.info({
-                plugin: `${manifest.id}@${manifest.version}`,
-                wsBasePath,
-                channels: manifest.ws.channels.length,
-              }, 'Mounting WebSocket channels');
-
-              const wsResult = await mountWebSocketChannels(server, manifest, {
-                backend,
-                pluginRoot,
-                workspaceRoot,
-                basePath: wsBasePath,
-                defaultTimeoutMs: manifest.ws.defaults?.timeoutMs ?? gatewayTimeoutMs,
-                defaultMaxMessageSize: manifest.ws.defaults?.maxMessageSize,
-              });
-
-              const wsDuration = performance.now() - wsStart;
-              channelsCount = wsResult.mounted;
-
-              if (wsResult.mounted > 0) {
-                platform.logger.info({
-                  plugin: `${manifest.id}@${manifest.version}`,
-                  channels: wsResult.mounted,
-                  durationMs: Number(wsDuration.toFixed(2)),
-                }, 'Successfully mounted WebSocket channels');
-              }
-
-              if (wsResult.errors.length > 0) {
-                platform.logger.warn({
-                  plugin: `${manifest.id}@${manifest.version}`,
-                  errors: wsResult.errors,
-                }, 'WebSocket channel mounting had errors');
-              }
-            } catch (wsError) {
-              platform.logger.error(
-                'Failed to mount WebSocket channels',
-                wsError instanceof Error ? wsError : new Error(String(wsError)),
-                { plugin: manifest.id }
-              );
-              // Continue execution even if WS fails - REST might still work
-            }
-          }
-
-          return {
-            success: true,
-            pluginId: manifest.id,
-            error: false,
-            routesCount,
-            channelsCount,
-          };
-        } catch (error) {
-          mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
-          platform.logger.error(
-            'Failed to mount plugin routes',
-            error instanceof Error ? error : new Error(String(error)),
-            { plugin: manifest.id }
-          );
-          return {
-            success: false,
-            pluginId: manifest.id,
-            error: true,
-            routesCount: 0,
-            channelsCount: 0,
-            failureError: `rest_mount_failed ${shortErrorMessage(error)}`,
-          };
+          await fs.access(check.filePath);
+          return { key: check.key, filePath: check.filePath, exists: true };
+        } catch {
+          return { key: check.key, filePath: check.filePath, exists: false };
         }
-      });
+      })
+    );
 
-    // Execute all mount tasks in parallel
-    // Use allSettled to ensure all plugins are processed even if some fail
-    const results = await Promise.allSettled(mountTasks);
+    // Build lookup: "pluginId::METHOD /path" → { exists, filePath }
+    const handlerExistsMap = new Map<string, { exists: boolean; filePath: string }>();
+    for (const result of handlerAccessResults) {
+      handlerExistsMap.set(result.key, { exists: result.exists, filePath: result.filePath });
+    }
 
-    // Aggregate stats from results (avoid race conditions)
+    platform.logger.debug({
+      totalHandlers: handlerChecks.length,
+      validHandlers: handlerAccessResults.filter(r => r.exists).length,
+      invalidHandlers: handlerAccessResults.filter(r => !r.exists).length,
+    }, 'Batch handler file validation completed');
+
+    // ── Phase 2: Sequential plugin mounting ──
+    // Routes are registered in-memory on Fastify (~0.1ms per route).
+    // Sequential mounting eliminates race conditions with zero performance cost.
     let mountedRoutes = 0;
     let mountedChannels = 0;
     let errors = 0;
@@ -318,36 +174,203 @@ export async function registerPluginRoutes(
     const failed: string[] = [];
     const routeFailures: Array<{ id: string; error: string }> = [];
 
-    for (const result of results) {
-      if (result.status === 'fulfilled') {
-        const value = result.value;
-        if (value.success) {
-          mountedRoutes += value.routesCount ?? 0;
-          mountedChannels += value.channelsCount ?? 0;
-          succeeded.push(value.pluginId);
-        } else {
-          errors += 1;
-          failed.push(value.pluginId);
-          if (value.failureError && readiness) {
-            routeFailures.push({
-              id: value.pluginId,
-              error: value.failureError,
-            });
+    for (const entry of mountableManifests) {
+      const { manifest, pluginRoot } = entry;
+
+      // Validate routes using pre-built handler map (no I/O here)
+      const restValidationErrors: string[] = [];
+      if (manifest.rest?.routes) {
+        for (const route of manifest.rest.routes) {
+          const handlerFile = route.handler.split('#')[0];
+          if (!handlerFile) {
+            restValidationErrors.push(
+              `Route ${route.method} ${route.path}: Invalid handler reference "${route.handler}"`
+            );
+            continue;
+          }
+          const lookupKey = `${manifest.id}::${route.method} ${route.path}`;
+          const check = handlerExistsMap.get(lookupKey);
+          if (check && !check.exists) {
+            restValidationErrors.push(
+              `Route ${route.method} ${route.path}: Handler file not found: ${check.filePath}`
+            );
           }
         }
-      } else {
-        errors += 1;
-        failed.push('unknown');
-        if (readiness) {
-          routeFailures.push({
-            id: 'unknown',
-            error: result.reason instanceof Error ? result.reason.message : String(result.reason),
+      }
+
+      if (restValidationErrors.length > 0) {
+        platform.logger.warn({
+          plugin: `${manifest.id}@${manifest.version}`,
+          pluginRoot,
+          remediation: 'Verify REST handler file and export exist',
+          errors: restValidationErrors,
+        }, 'REST validation errors found, will skip problematic routes but continue mounting others');
+
+        const errorPaths = new Set(restValidationErrors.map((error) => {
+          const match = error.match(/Route\s+(\w+)\s+([^\s:]+)/);
+          return match ? `${match[1]} ${match[2]}` : null;
+        }).filter(Boolean));
+
+        const validRoutes = manifest.rest!.routes!.filter((route) => {
+          const routeKey = `${route.method} ${route.path}`;
+          return !errorPaths.has(routeKey);
+        });
+
+        if (validRoutes.length === 0) {
+          platform.logger.error('All routes failed validation, skipping plugin', undefined, {
+            plugin: `${manifest.id}@${manifest.version}`,
+            pluginRoot,
+            errors: restValidationErrors,
           });
+          errors += 1;
+          failed.push(manifest.id);
+          routeFailures.push({
+            id: manifest.id,
+            error: summarizeValidationErrors(restValidationErrors),
+          });
+          continue;
         }
+
+        manifest.rest!.routes = validRoutes;
+        platform.logger.info({
+          plugin: `${manifest.id}@${manifest.version}`,
+          totalRoutes: manifest.rest!.routes.length + restValidationErrors.length,
+          validRoutes: validRoutes.length,
+          skippedRoutes: restValidationErrors.length,
+        }, 'Filtered routes, mounting valid ones');
+      }
+
+      try {
+        const start = performance.now();
+
+        let pluginBasePath: string;
+        if (manifest.rest?.basePath) {
+          if (manifest.rest.basePath.startsWith('/api/')) {
+            pluginBasePath = manifest.rest.basePath;
+          } else if (manifest.rest.basePath.startsWith('/v1/')) {
+            pluginBasePath = manifest.rest.basePath.replace(/^\/v1/, config.basePath);
+          } else {
+            pluginBasePath = `${config.basePath}${manifest.rest.basePath}`;
+          }
+        } else {
+          pluginBasePath = `${config.basePath}/plugins/${manifest.id}`;
+        }
+
+        platform.logger.info({
+          plugin: `${manifest.id}@${manifest.version}`,
+          configBasePath: config.basePath,
+          manifestBasePath: manifest.rest?.basePath,
+          pluginBasePath,
+          pluginRoot,
+          routes: manifest.rest?.routes?.length ?? 0,
+        }, 'Mounting plugin routes');
+
+        await mountRoutes(server, manifest, {
+          backend,
+          pluginRoot,
+          workspaceRoot,
+          basePath: pluginBasePath,
+          defaultTimeoutMs: gatewayTimeoutMs,
+        });
+
+        const duration = performance.now() - start;
+        const routesCount = manifest.rest?.routes?.length ?? 0;
+
+        for (const route of manifest.rest?.routes ?? []) {
+          metricsCollector.registerRouteBudget(
+            route.method,
+            `${pluginBasePath}${route.path}`,
+            route.timeoutMs ?? gatewayTimeoutMs,
+            manifest.id
+          );
+        }
+
+        mountMetrics.recordSuccess(manifest.id, routesCount, duration);
+
+        for (const route of manifest.rest?.routes ?? []) {
+          platform.logger.info({
+            plugin: manifest.id,
+            method: route.method,
+            path: `${pluginBasePath}${route.path}`,
+            handler: route.handler,
+          }, 'Mounted route');
+        }
+
+        platform.logger.info({
+          plugin: `${manifest.id}@${manifest.version}`,
+          pluginBasePath,
+          routesCount,
+          durationMs: Number(duration.toFixed(2)),
+        }, 'Successfully mounted plugin routes');
+
+        // Mount WebSocket channels if present
+        let channelsCount = 0;
+        if (manifest.ws?.channels && manifest.ws.channels.length > 0) {
+          try {
+            const wsStart = performance.now();
+            const wsBasePath = manifest.ws.basePath || `/v1/ws/plugins/${manifest.id}`;
+
+            platform.logger.info({
+              plugin: `${manifest.id}@${manifest.version}`,
+              wsBasePath,
+              channels: manifest.ws.channels.length,
+            }, 'Mounting WebSocket channels');
+
+            const wsResult = await mountWebSocketChannels(server, manifest, {
+              backend,
+              pluginRoot,
+              workspaceRoot,
+              basePath: wsBasePath,
+              defaultTimeoutMs: manifest.ws.defaults?.timeoutMs ?? gatewayTimeoutMs,
+              defaultMaxMessageSize: manifest.ws.defaults?.maxMessageSize,
+            });
+
+            const wsDuration = performance.now() - wsStart;
+            channelsCount = wsResult.mounted;
+
+            if (wsResult.mounted > 0) {
+              platform.logger.info({
+                plugin: `${manifest.id}@${manifest.version}`,
+                channels: wsResult.mounted,
+                durationMs: Number(wsDuration.toFixed(2)),
+              }, 'Successfully mounted WebSocket channels');
+            }
+
+            if (wsResult.errors.length > 0) {
+              platform.logger.warn({
+                plugin: `${manifest.id}@${manifest.version}`,
+                errors: wsResult.errors,
+              }, 'WebSocket channel mounting had errors');
+            }
+          } catch (wsError) {
+            platform.logger.error(
+              'Failed to mount WebSocket channels',
+              wsError instanceof Error ? wsError : new Error(String(wsError)),
+              { plugin: manifest.id }
+            );
+          }
+        }
+
+        mountedRoutes += routesCount;
+        mountedChannels += channelsCount;
+        succeeded.push(manifest.id);
+      } catch (error) {
+        mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
+        platform.logger.error(
+          'Failed to mount plugin routes',
+          error instanceof Error ? error : new Error(String(error)),
+          { plugin: manifest.id }
+        );
+        errors += 1;
+        failed.push(manifest.id);
+        routeFailures.push({
+          id: manifest.id,
+          error: `rest_mount_failed ${shortErrorMessage(error)}`,
+        });
       }
     }
 
-    // Update stats and readiness (safely, after all parallel operations complete)
+    // Update stats and readiness
     stats.mountedRoutes = mountedRoutes;
     stats.mountedChannels = mountedChannels;
     stats.errors = errors;
@@ -357,13 +380,13 @@ export async function registerPluginRoutes(
 
     // Log summary
     platform.logger.info({
-      total: mountTasks.length,
+      total: mountableManifests.length,
       succeeded: succeeded.length,
       failed: failed.length,
       mountedRoutes,
       mountedChannels,
       errors,
-    }, 'Parallel plugin route and WebSocket channel mounting completed');
+    }, 'Sequential plugin route and WebSocket channel mounting completed');
   } catch (error) {
     platform.logger.error(
       'Plugin discovery failed',

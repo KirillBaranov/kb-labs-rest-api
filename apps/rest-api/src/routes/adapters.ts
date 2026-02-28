@@ -113,7 +113,7 @@ function extractStatsOptions(query: any): {
   breakdownBy?: string;
   metrics?: string[];
 } {
-  if (!query) return {};
+  if (!query) {return {};}
 
   const groupBy = query.groupBy as string | undefined;
   const validGroupBy = ['hour', 'day', 'week', 'month'];

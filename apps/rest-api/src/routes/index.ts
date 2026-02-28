@@ -289,89 +289,89 @@ export async function registerRoutes(
     platform.logger.info('Historical metrics collector stopped');
   });
 
-  // Initialize incident storage (uses logs database)
-  let incidentStorage: IncidentStorage;
-  try {
-    // Get database adapter from platform (same DB as logs)
-    const db = platform.getAdapter<ISQLDatabase>('db');
+  // Initialize incident storage (uses logs database, optional)
+  let incidentStorage: IncidentStorage | undefined;
+  const db = platform.getAdapter<ISQLDatabase>('db');
 
-    if (!db) {
-      throw new Error('Database adapter not configured. Please configure db adapter in kb.config.json');
-    }
+  if (db) {
+    try {
+      // Initialize incidents schema
+      const { readFileSync } = await import('node:fs');
+      const { fileURLToPath } = await import('node:url');
+      const { dirname, join } = await import('node:path');
 
-    // Initialize incidents schema
-    const { readFileSync } = await import('node:fs');
-    const { fileURLToPath } = await import('node:url');
-    const { dirname, join } = await import('node:path');
+      const __filename = fileURLToPath(import.meta.url);
+      const __dirname = dirname(__filename);
+      const schemaPath = join(__dirname, '..', 'services', 'incident-schema.sql');
+      const schema = readFileSync(schemaPath, 'utf-8');
 
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = dirname(__filename);
-    const schemaPath = join(__dirname, '..', 'services', 'incident-schema.sql');
-    const schema = readFileSync(schemaPath, 'utf-8');
+      // Execute schema
+      if ('exec' in db && typeof (db as any).exec === 'function') {
+        await (db as any).exec(schema);
+      } else {
+        // Fallback: execute statements one by one
+        const statements = schema
+          .split(';')
+          .map(s => s.trim())
+          .filter(s => s.length > 0 && !s.startsWith('--'));
 
-    // Execute schema
-    if ('exec' in db && typeof (db as any).exec === 'function') {
-      await (db as any).exec(schema);
-    } else {
-      // Fallback: execute statements one by one
-      const statements = schema
-        .split(';')
-        .map(s => s.trim())
-        .filter(s => s.length > 0 && !s.startsWith('--'));
-
-      for (const statement of statements) {
-        if (statement) {
-          await db.query(statement);
+        for (const statement of statements) {
+          if (statement) {
+            await db.query(statement);
+          }
         }
       }
+
+      platform.logger.info('Incidents schema initialized');
+
+      // Create incident storage
+      incidentStorage = new IncidentStorage(
+        db,
+        { debug: process.env.NODE_ENV !== 'production' },
+        platformServices.logger as any
+      );
+
+      platform.logger.info('Incident storage initialized');
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      platform.logger.warn('Failed to initialize incident storage, continuing without it', { error: error.message });
     }
+  } else {
+    platform.logger.warn('Database adapter (db) not configured — incident storage disabled. Configure db adapter in kb.config.json to enable.');
+  }
 
-    platform.logger.info('Incidents schema initialized');
-
-    // Create incident storage
-    incidentStorage = new IncidentStorage(
-      db,
-      { debug: process.env.NODE_ENV !== 'production' },
+  // Initialize incident detector for auto-detection (only if storage available)
+  if (incidentStorage) {
+    const incidentDetector = new IncidentDetector(
+      incidentStorage,
+      {
+        intervalMs: 30000, // Check every 30 seconds
+        cooldownMs: 5 * 60 * 1000, // 5 minute cooldown between same incidents
+        debug: process.env.NODE_ENV !== 'production',
+        thresholds: {
+          errorRateWarning: 5,
+          errorRateCritical: 10,
+          latencyP99Warning: 2000,
+          latencyP99Critical: 5000,
+          latencyP95Warning: 1000,
+          minRequestsForDetection: 10,
+          pluginErrorRateWarning: 10,
+          pluginErrorRateCritical: 25,
+        },
+      },
       platformServices.logger as any
     );
 
-    platform.logger.info('Incident storage initialized');
-  } catch (err) {
-    const error = err instanceof Error ? err : new Error(String(err));
-    platform.logger.error('Failed to initialize incident storage', error);
-    throw error;
+    // Start incident detector
+    incidentDetector.start();
+    platform.logger.info('Incident detector started');
+
+    // Stop detector on server close
+    server.addHook('onClose', async () => {
+      incidentDetector.stop();
+      platform.logger.info('Incident detector stopped');
+    });
   }
-
-  // Initialize incident detector for auto-detection
-  const incidentDetector = new IncidentDetector(
-    incidentStorage,
-    {
-      intervalMs: 30000, // Check every 30 seconds
-      cooldownMs: 5 * 60 * 1000, // 5 minute cooldown between same incidents
-      debug: process.env.NODE_ENV !== 'production',
-      thresholds: {
-        errorRateWarning: 5,
-        errorRateCritical: 10,
-        latencyP99Warning: 2000,
-        latencyP99Critical: 5000,
-        latencyP95Warning: 1000,
-        minRequestsForDetection: 10,
-        pluginErrorRateWarning: 10,
-        pluginErrorRateCritical: 25,
-      },
-    },
-    platformServices.logger as any
-  );
-
-  // Start incident detector
-  incidentDetector.start();
-  platform.logger.info('Incident detector started');
-
-  // Stop detector on server close
-  server.addHook('onClose', async () => {
-    incidentDetector.stop();
-    platform.logger.info('Incident detector stopped');
-  });
 
   await registerObservabilityRoutes(server, config, repoRoot, historicalCollector, incidentStorage, platformServices);
 
