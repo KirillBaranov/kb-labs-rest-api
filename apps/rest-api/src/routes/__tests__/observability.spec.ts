@@ -1,12 +1,14 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerObservabilityRoutes } from '../observability';
 import { exec } from 'node:child_process';
 
 // Mock node:child_process
-vi.mock('node:child_process');
+vi.mock('node:child_process', () => ({
+  exec: vi.fn(),
+}));
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -26,7 +28,7 @@ const mockFetch = vi.fn();
 global.fetch = mockFetch as any;
 
 describe('registerObservabilityRoutes', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
   const repoRoot = '/mock/repo';
 
   beforeEach(async () => {

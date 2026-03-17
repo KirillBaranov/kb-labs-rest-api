@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerEnvelopeMiddleware } from '../envelope';
 
@@ -24,7 +24,7 @@ const TEST_CONFIG: RestApiConfig = {
 };
 
 describe('registerEnvelopeMiddleware', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
 
   beforeEach(async () => {
     app = Fastify({ logger: false });
@@ -228,7 +228,7 @@ describe('registerEnvelopeMiddleware', () => {
 
   describe('streaming responses', () => {
     it('should skip envelope for SSE responses', async () => {
-      app.get('/events', async (request, reply) => {
+      app.get('/events', async (request: FastifyRequest, reply: FastifyReply) => {
         reply.header('content-type', 'text/event-stream');
         return 'data: test\n\n';
       });
@@ -248,7 +248,7 @@ describe('registerEnvelopeMiddleware', () => {
 
   describe('non-JSON responses', () => {
     it('should pass through non-JSON string responses', async () => {
-      app.get('/text', async (request, reply) => {
+      app.get('/text', async (request: FastifyRequest, reply: FastifyReply) => {
         reply.header('content-type', 'text/plain');
         return 'Plain text response';
       });

@@ -45,6 +45,12 @@
       "@kb-labs/core-sys/*": [
         "../kb-labs-core/packages/core-sys/src/*"
       ],
+      "@kb-labs/core-tenant": [
+        "../kb-labs-core/packages/core-tenant/src/index.ts"
+      ],
+      "@kb-labs/core-tenant/*": [
+        "../kb-labs-core/packages/core-tenant/src/*"
+      ],
       "@kb-labs/core-workspace": [
         "../kb-labs-core/packages/core-workspace/src/index.ts"
       ],
@@ -92,6 +98,12 @@
       ],
       "@kb-labs/studio-contracts/*": [
         "../kb-labs-studio/packages/studio-contracts/src/*"
+      ],
+      "@kb-labs/workflow-constants": [
+        "../kb-labs-workflow/packages/workflow-constants/src/index.ts"
+      ],
+      "@kb-labs/workflow-constants/*": [
+        "../kb-labs-workflow/packages/workflow-constants/src/*"
       ],
       "@kb-labs/workflow-contracts": [
         "../kb-labs-workflow/packages/workflow-contracts/src/index.ts"

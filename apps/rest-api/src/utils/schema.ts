@@ -12,13 +12,29 @@ export const objectSchema = {
 } as const;
 
 /**
+ * Error response schema (includes message field for error responses)
+ */
+export const errorSchema = {
+  type: 'object',
+  properties: {
+    statusCode: { type: 'number' },
+    error: { type: 'string' },
+    message: { type: 'string' },
+    code: { type: 'string' },
+  },
+  additionalProperties: true,
+} as const;
+
+/**
  * Response schemas (simplified, validation via Zod in handlers)
  */
 export const responseSchemas = {
   200: objectSchema,
+  201: objectSchema,
   202: objectSchema,
-  400: objectSchema,
-  404: objectSchema,
-  500: objectSchema,
+  204: { type: 'null' } as const,
+  400: errorSchema,
+  404: errorSchema,
+  500: errorSchema,
 } as const;
 

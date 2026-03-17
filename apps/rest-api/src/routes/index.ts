@@ -25,8 +25,7 @@ import { registerPlatformRoutes } from './platform';
 import { registerDebugRoutes, registerRouteCollector } from './debug-routes';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
-import { metricsCollector } from '../middleware/metrics';
-import { getPlatformServices } from '../platform';
+import { metricsCollector } from '../middleware/metrics.js';
 import { HistoricalMetricsCollector } from '../services/historical-metrics';
 import { IncidentStorage } from '../services/incident-storage';
 import { IncidentDetector } from '../services/incident-detector';
@@ -233,8 +232,8 @@ export async function registerRoutes(
       })
       .catch(error => {
         platform.logger.error(
-          { err: error },
-          'Plugin route remount failed'
+          'Plugin route remount failed',
+          error instanceof Error ? error : new Error(String(error))
         );
       });
 
@@ -255,17 +254,15 @@ export async function registerRoutes(
 
   await registerPluginRegistry(server, config, cliApi);
 
-  // Get workflow engine, job scheduler, and cron manager from platform
-  const workflowEngine = (platform as any).workflows ?? null;
-  const jobScheduler = (platform as any).jobs ?? null;
-  const cronManager = (platform as any).cron ?? null;
-
-  await registerWorkflowRoutes(server, config, workflowEngine, jobScheduler);
+  // Workflow SSE streaming (long-lived connections that can't go through plugin execution)
+  // All CRUD operations are handled by the workflow plugin routes (/plugins/workflow/...)
+  await registerWorkflowRoutes(server, config);
 
   // Register jobs management endpoints (scheduled jobs)
+  const cronManager = (platform as any).cron ?? null;
   await registerJobsRoutes(server, config, cronManager);
 
-  const platformServices = getPlatformServices();
+  const platformServices = platform;
 
   await registerCacheRoutes(server, config, cliApi);
 

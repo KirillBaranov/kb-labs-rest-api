@@ -92,9 +92,9 @@ export function registerEnvelopeMiddleware(
   });
 
   // Error handler
-  server.setErrorHandler(async (error, request, reply) => {
+  server.setErrorHandler(async (error: any, request, reply) => {
     const statusCode = error.statusCode || 500;
-    
+
     // Extract error details
     const errorCode = (error as any).code || 'E_INTERNAL';
     const message = error.message || 'Internal server error';

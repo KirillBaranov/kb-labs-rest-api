@@ -26,16 +26,15 @@ export async function registerCacheRoutes(
   server.post(`${basePath}/cache/invalidate`, async (request, reply) => {
     const start = Date.now();
 
-    // Capture current state
-    const beforeSnapshot = cliApi.snapshot();
-    const previousRev = beforeSnapshot.rev;
-
-    platform.logger.info({
-      requestId: request.id,
-      previousRev,
-    }, 'Manual cache invalidation requested');
-
     try {
+      // Capture current state
+      const beforeSnapshot = cliApi.snapshot();
+      const previousRev = beforeSnapshot.rev;
+
+      platform.logger.info('Manual cache invalidation requested', {
+        requestId: request.id,
+        previousRev,
+      });
       // Force cache invalidation and refresh discovery
       // This will trigger re-discovery and clear stale cache
       await cliApi.refresh();
@@ -46,13 +45,13 @@ export async function registerCacheRoutes(
 
       const elapsed = Date.now() - start;
 
-      platform.logger.info({
+      platform.logger.info('Cache invalidated successfully', {
         requestId: request.id,
         previousRev,
         newRev: afterSnapshot.rev,
         pluginsDiscovered: plugins.length,
         elapsedMs: elapsed,
-      }, 'Cache invalidated successfully');
+      });
 
       return reply.code(200).send({
         ok: true,

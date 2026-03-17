@@ -6,11 +6,12 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+import type { FastifyRequest, FastifyReply } from 'fastify';
+
 import { registerRequestIdMiddleware } from '../request-id';
 
 describe('registerRequestIdMiddleware', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
 
   beforeEach(async () => {
     app = Fastify({ logger: false });
@@ -86,7 +87,7 @@ describe('registerRequestIdMiddleware', () => {
     it('should attach logger to request object', async () => {
       let requestLogger: any;
 
-      app.get('/test', async (request) => {
+      app.get('/test', async (request: FastifyRequest) => {
         requestLogger = (request as any).log;
         return { message: 'ok' };
       });
@@ -109,7 +110,7 @@ describe('registerRequestIdMiddleware', () => {
     it('should attach logger to reply object', async () => {
       let replyLogger: any;
 
-      app.get('/test', async (request, reply) => {
+      app.get('/test', async (request: FastifyRequest, reply: FastifyReply) => {
         replyLogger = (reply as any).log;
         return { message: 'ok' };
       });
@@ -132,7 +133,7 @@ describe('registerRequestIdMiddleware', () => {
     it('should allow calling logger methods without errors', async () => {
       let requestLogger: any;
 
-      app.get('/test', async (request) => {
+      app.get('/test', async (request: FastifyRequest) => {
         requestLogger = (request as any).log;
 
         // Call all logger methods to ensure they work

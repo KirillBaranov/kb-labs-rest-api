@@ -4,7 +4,15 @@
  */
 
 import type { FastifyRequest, FastifyReply } from 'fastify';
-import type { TenantRateLimiter } from '@kb-labs/tenant';
+
+interface TenantRateLimiter {
+  checkLimit(tenantId: string, resource: string): Promise<{
+    allowed: boolean;
+    limit: number;
+    remaining: number;
+    resetAt: number;
+  }>;
+}
 
 /**
  * Extract tenant ID from request

@@ -9,7 +9,7 @@ import {
   tenantErrorsTotal,
   tenantRequestDuration,
 } from './prom-metrics';
-import { getPlatformServices } from '../platform';
+import { platform } from '@kb-labs/core-runtime';
 
 /**
  * @module @kb-labs/rest-api-app/middleware/metrics
@@ -643,7 +643,7 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     const start = request.kbMetricsStart ?? performance.now();
     const duration = Math.max(performance.now() - start, 0);
     const method = (request.method || request.raw.method || 'GET').toUpperCase();
-    const routePath = request.routerPath ?? request.routeOptions?.url ?? request.url;
+    const routePath = request.routeOptions?.url ?? request.url;
 
     // Extract tenantId from header or env var
     const tenantId = (request.headers['x-tenant-id'] as string | undefined) ?? process.env.KB_TENANT_ID ?? 'default';
@@ -707,7 +707,7 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     // This enables quarterly/annual reports and endpoint usage analysis
     // Skip OPTIONS (CORS preflight) - they don't carry useful information
     if (method !== 'OPTIONS') {
-      const { analytics } = getPlatformServices();
+      const { analytics } = platform;
       if (analytics) {
         // Sample high-frequency health check endpoints (1:100 for metrics, 1:10 for health/ready)
         // This prevents overwhelming analytics with 142k+ ping-pong events

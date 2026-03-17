@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { metricsCollector } from '../middleware/metrics';
+import { metricsCollector } from '../middleware/metrics.js';
 import { getHeaderDebugEntries } from '../diagnostics/header-debug';
 import { getPrometheusMetrics, updateProcessUptime } from '../middleware/prom-metrics';
 
@@ -187,13 +187,13 @@ export function registerMetricsRoutes(
       // Parse sum: http_request_duration_ms_sum{...} <sum>
       const sumMatch = line.match(/^http_request_duration_ms_sum\{[^}]*\}\s+(\d+(?:\.\d+)?)/);
       if (sumMatch) {
-        totalSum += parseFloat(sumMatch[1]);
+        totalSum += parseFloat(sumMatch[1]!);
       }
 
       // Parse count: http_request_duration_ms_count{...} <count>
       const countMatch = line.match(/^http_request_duration_ms_count\{[^}]*\}\s+(\d+(?:\.\d+)?)/);
       if (countMatch) {
-        totalCount += parseFloat(countMatch[1]);
+        totalCount += parseFloat(countMatch[1]!);
       }
     }
 

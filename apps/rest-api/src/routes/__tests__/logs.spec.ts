@@ -4,11 +4,11 @@
 
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerLogRoutes } from '../logs.js';
 import { platform } from '@kb-labs/core-runtime';
-import type { LogRecord, ILogQueryService } from '@kb-labs/core-platform';
+import type { LogRecord, ILogReader } from '@kb-labs/core-platform';
 
 const BASE_CONFIG: RestApiConfig = {
   port: 3000,
@@ -34,8 +34,8 @@ const createMockLog = (id: string, level: string, message: string, timestamp = D
 });
 
 describe('Log Routes Integration Tests', () => {
-  let app: FastifyInstance;
-  let mockLogService: Partial<ILogQueryService>;
+  let app: ReturnType<typeof Fastify>;
+  let mockLogService: Partial<ILogReader>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -51,7 +51,7 @@ describe('Log Routes Integration Tests', () => {
     };
 
     // Mock platform.logs
-    vi.spyOn(platform, 'logs', 'get').mockReturnValue(mockLogService as ILogQueryService);
+    vi.spyOn(platform, 'logs', 'get').mockReturnValue(mockLogService as ILogReader);
 
     app = Fastify({ logger: false });
     await registerLogRoutes(app, BASE_CONFIG, {} as any);
@@ -238,8 +238,8 @@ describe('Log Routes Integration Tests', () => {
       const payload = response.json();
 
       expect(payload.ok).toBe(true);
-      expect(payload.data.msg).toBe('Test error');
-      expect(payload.data.level).toBe('error');
+      expect(payload.data.log.msg).toBe('Test error');
+      expect(payload.data.log.level).toBe('error');
 
       expect(mockLogService.getById).toHaveBeenCalledWith('log-123');
     });

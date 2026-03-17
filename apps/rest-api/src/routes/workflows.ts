@@ -1,309 +1,256 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+/**
+ * @module @kb-labs/rest-api-app/routes/workflows
+ * Workflow SSE streaming endpoint.
+ *
+ * All CRUD operations (list runs, get run, cancel, run workflow) are handled
+ * by the workflow plugin via plugin routes (/plugins/workflow/...).
+ * This file only provides the SSE event stream which requires a long-lived
+ * connection that cannot go through the plugin execution backend.
+ */
+
+import type { FastifyInstance } from 'fastify'
 import type { RestApiConfig } from '@kb-labs/rest-api-core'
-import type { IWorkflowEngine, IJobScheduler } from '@kb-labs/core-platform'
-import type { WorkflowsAPI, JobsAPI } from '@kb-labs/plugin-contracts'
-import { createWorkflowsAPI } from '@kb-labs/plugin-runtime'
-import { createJobsAPI } from '@kb-labs/plugin-runtime'
-import { WorkflowSpecSchema, type WorkflowSpec } from '@kb-labs/workflow-contracts'
-import { z } from 'zod'
+import { WORKFLOW_REDIS_CHANNEL } from '@kb-labs/workflow-constants'
+import { platform } from '@kb-labs/core-runtime'
 import { normalizeBasePath } from '../utils/path-helpers'
-import { objectSchema, responseSchemas } from '../utils/schema'
 
-const runRequestSchema = z
-  .object({
-    inlineSpec: z.unknown().optional(),
-    specRef: z.string().min(1).optional(),
-    idempotency: z.string().min(1).optional(),
-    concurrency: z
-      .object({
-        group: z.string().min(1),
-      })
-      .optional(),
-    metadata: z.record(z.unknown()).optional(),
-  })
-  .strict()
+const TERMINAL_EVENT_TYPES = ['run.finished', 'run.failed', 'run.cancelled']
+const KEEP_ALIVE_MS = 30_000
+const IDLE_TIMEOUT_MS = 60_000
+const EVENT_BUS_KEY = `eventbus:${WORKFLOW_REDIS_CHANNEL}`
 
-const listQuerySchema = z
-  .object({
-    status: z.string().optional(),
-    limit: z
-      .union([z.string(), z.number()])
-      .optional()
-      .transform(value => (value === undefined ? undefined : Number(value))),
-  })
-  .strict()
+/**
+ * Replay past events for a runId from the Redis sorted set.
+ * Returns true if a terminal event was found (run already finished).
+ */
+async function replayHistory(
+  runId: string,
+  sendEvent: (type: string, payload: unknown, timestamp?: string) => void,
+): Promise<boolean> {
+  let hasTerminal = false
+  try {
+    const cache = platform.cache
+    if (!cache?.zrangebyscore) {return false}
 
-const logsQuerySchema = z
-  .object({
-    follow: z
-      .enum(['1', 'true', 'yes', 'on'])
-      .optional()
-      .transform(value => Boolean(value)),
-    idleTimeoutMs: z
-      .union([z.string(), z.number()])
-      .optional()
-      .transform(value => (value === undefined ? undefined : Number(value))),
-  })
-  .strict()
-
-const eventsQuerySchema = z
-  .object({
-    cursor: z.string().optional(),
-    limit: z
-      .union([z.string(), z.number()])
-      .optional()
-      .transform(value => (value === undefined ? undefined : Number(value))),
-    follow: z
-      .enum(['1', 'true', 'yes', 'on'])
-      .optional()
-      .transform(value => Boolean(value)),
-    pollIntervalMs: z
-      .union([z.string(), z.number()])
-      .optional()
-      .transform(value => (value === undefined ? undefined : Number(value))),
-  })
-  .strict()
+    const stored = await cache.zrangebyscore(EVENT_BUS_KEY, 0, Date.now())
+    for (const raw of stored) {
+      try {
+        const wrapper = JSON.parse(raw) as { data: { type: string; runId: string; payload?: unknown; timestamp?: string } }
+        const event = wrapper.data
+        if (event.runId !== runId) {continue}
+        sendEvent(event.type, event.payload, event.timestamp)
+        if (TERMINAL_EVENT_TYPES.includes(event.type)) {
+          hasTerminal = true
+        }
+      } catch { /* skip malformed entries */ }
+    }
+  } catch { /* cache unavailable — skip replay */ }
+  return hasTerminal
+}
 
 export async function registerWorkflowRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
-  workflowEngine: IWorkflowEngine | null,
-  jobScheduler: IJobScheduler | null,
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath)
 
-  // Helper to extract tenantId from headers
-  const getTenantId = (headers: Record<string, unknown>): string | undefined => {
-    const tenantHeader = headers['x-tenant-id'];
-    if (!tenantHeader) {return undefined;}
-    return Array.isArray(tenantHeader) ? tenantHeader[0] : String(tenantHeader);
-  };
-
-  // Create WorkflowsAPI and JobsAPI with full permissions for REST API
-  const createWorkflowsAPIForRequest = (request: FastifyRequest): WorkflowsAPI | null => {
-    if (!workflowEngine) {return null;}
-    return createWorkflowsAPI({
-      tenantId: getTenantId(request.headers),
-      engine: workflowEngine,
-      permissions: {
-        platform: {
-          workflows: true, // REST API has full workflow access
-        },
-      },
-    });
-  };
-
-  const createJobsAPIForRequest = (request: FastifyRequest): JobsAPI | null => {
-    if (!jobScheduler) {return null;}
-    return createJobsAPI({
-      tenantId: getTenantId(request.headers),
-      scheduler: jobScheduler,
-      permissions: {
-        platform: {
-          jobs: true, // REST API has full jobs access
-        },
-      },
-    });
-  };
-
-  server.route({
-    method: 'POST',
-    url: `${basePath}/workflows/run`,
-    schema: {
-      body: objectSchema,
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      const workflowsAPI = createWorkflowsAPIForRequest(request);
-      if (!workflowsAPI) {
-        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
-      }
-
-      const body = runRequestSchema.parse(request.body ?? {})
-
-      if (body.specRef) {
-        throw createError(400, 'WF_SPEC_REF_UNSUPPORTED', 'specRef is not supported yet')
-      }
-
-      const spec = parseInlineSpec(body.inlineSpec, request)
-      if (spec === null) {
-        throw createError(400, 'WF_SPEC_MISSING', 'inlineSpec is required')
-      }
-
-      // Use the new WorkflowsAPI
-      const runId = await workflowsAPI.run(spec.id, {
-        ...body.metadata,
-      }, {
-        priority: spec.priority,
-        timeout: spec.timeout,
-        tags: {
-          source: 'rest',
-          actor: resolveActor(request.headers),
-          ...body.metadata,
-        },
-        idempotencyKey: body.idempotency ?? resolveIdempotencyFromHeaders(request.headers),
-      });
-
-      return reply.code(202).send({ runId })
-    },
-  })
-
-  server.route({
-    method: 'GET',
-    url: `${basePath}/workflows/runs`,
-    schema: {
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      const workflowsAPI = createWorkflowsAPIForRequest(request);
-      if (!workflowsAPI) {
-        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
-      }
-
-      const query = listQuerySchema.parse(request.query ?? {})
-      const runs = await workflowsAPI.list({
-        status: query.status as any,
-        limit: query.limit,
-      })
-      return reply.send({ runs })
-    },
-  })
-
-  server.route({
-    method: 'GET',
-    url: `${basePath}/workflows/runs/:runId`,
-    schema: {
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      const workflowsAPI = createWorkflowsAPIForRequest(request);
-      if (!workflowsAPI) {
-        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
-      }
-
-      const runId = getRunId(request.params)
-      const run = await workflowsAPI.status(runId)
-      if (!run) {
-        throw createError(404, 'WF_RUN_NOT_FOUND', `Workflow run ${runId} not found`)
-      }
-      return reply.send({ run })
-    },
-  })
-
-  server.route({
-    method: 'POST',
-    url: `${basePath}/workflows/runs/:runId/cancel`,
-    schema: {
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      const workflowsAPI = createWorkflowsAPIForRequest(request);
-      if (!workflowsAPI) {
-        throw createError(503, 'WF_ENGINE_UNAVAILABLE', 'Workflow engine not available');
-      }
-
-      const runId = getRunId(request.params)
-
-      // Check if run exists before cancelling
-      const run = await workflowsAPI.status(runId)
-      if (!run) {
-        throw createError(404, 'WF_RUN_NOT_FOUND', `Workflow run ${runId} not found`)
-      }
-
-      // Cancel the workflow
-      await workflowsAPI.cancel(runId)
-
-      // Get updated status
-      const updatedRun = await workflowsAPI.status(runId)
-      return reply.send({ run: updatedRun })
-    },
-  })
-
-  // TODO: Implement logs/events routes using WorkflowsAPI
-  // These routes require streaming support which is not yet implemented in WorkflowsAPI
-
-  server.route({
-    method: 'GET',
-    url: `${basePath}/workflows/runs/:runId/logs`,
-    handler: async (request, reply) => {
-      throw createError(501, 'NOT_IMPLEMENTED', 'Workflow logs streaming not yet implemented in new API')
-    },
-  })
-
+  // SSE stream of workflow run events via shared IEventBus.
+  // No local engine needed — events arrive through the distributed event bus
+  // (state broker / Redis / Kafka). The daemon publishes, we subscribe.
   server.route({
     method: 'GET',
     url: `${basePath}/workflows/runs/:runId/events`,
     handler: async (request, reply) => {
-      throw createError(501, 'NOT_IMPLEMENTED', 'Workflow events streaming not yet implemented in new API')
+      const runId = getRunId(request.params)
+
+      // SSE response — hijack from Fastify
+      reply.hijack()
+      const raw = reply.raw
+
+      const origin = request.headers.origin
+      if (typeof origin === 'string' && (origin === 'http://localhost:3000' || origin === 'http://localhost:5173')) {
+        raw.setHeader('Access-Control-Allow-Origin', origin)
+        raw.setHeader('Access-Control-Allow-Credentials', 'true')
+      }
+      raw.setHeader('Content-Type', 'text/event-stream')
+      raw.setHeader('Cache-Control', 'no-cache, no-transform')
+      raw.setHeader('Connection', 'keep-alive')
+      raw.flushHeaders?.()
+      raw.write(': connected\n\n')
+
+      const sentIds = new Set<string>()
+
+      const sendEvent = (type: string, payload: unknown, timestamp?: string) => {
+        if (raw.writableEnded) {return}
+        const data = { type, runId, payload, timestamp: timestamp ?? new Date().toISOString() }
+        // Dedup by type+timestamp to avoid replaying events that also arrive live
+        const dedup = `${type}:${data.timestamp}`
+        if (sentIds.has(dedup)) {return}
+        sentIds.add(dedup)
+        raw.write(`event: workflow.event\n`)
+        raw.write(`data: ${JSON.stringify(data)}\n\n`)
+      }
+
+      // Replay history — send past events for this run
+      const alreadyFinished = await replayHistory(runId, sendEvent)
+      if (alreadyFinished) {
+        raw.end()
+        return
+      }
+
+      let idleTimer: ReturnType<typeof setTimeout> | null = null
+
+      const resetIdle = () => {
+        if (idleTimer) {clearTimeout(idleTimer)}
+        idleTimer = setTimeout(() => {
+          cleanup()
+        }, IDLE_TIMEOUT_MS)
+      }
+
+      const keepAliveTimer = setInterval(() => {
+        if (raw.writableEnded) {return}
+        raw.write(': keep-alive\n\n')
+      }, KEEP_ALIVE_MS)
+
+      const unsubscribe = platform.eventBus.subscribe(WORKFLOW_REDIS_CHANNEL, async (rawEvent: unknown) => {
+        const event = rawEvent as { type: string; runId: string; payload?: unknown; timestamp?: string }
+        if (event.runId !== runId) {return}
+        sendEvent(event.type, event.payload, event.timestamp)
+        resetIdle()
+        if (TERMINAL_EVENT_TYPES.includes(event.type)) {
+          cleanup()
+        }
+      })
+
+      const cleanup = () => {
+        unsubscribe()
+        if (idleTimer) {clearTimeout(idleTimer)}
+        clearInterval(keepAliveTimer)
+        if (!raw.writableEnded) {
+          raw.write(`event: workflow.done\ndata: {}\n\n`)
+          raw.end()
+        }
+      }
+
+      resetIdle()
+      request.raw.on('close', cleanup)
     },
   })
-}
 
-function parseInlineSpec(value: unknown, request: FastifyRequest): WorkflowSpec | null {
-  if (!value) {
-    return null
-  }
-  if (typeof value === 'object' && value !== null) {
-    const result = WorkflowSpecSchema.safeParse(value)
-    if (!result.success) {
-      if ((request as any).kbLogger) {
-        (request as any).kbLogger.error('Invalid inline workflow spec object', undefined, { issues: result.error.issues });
+  // SSE stream of workflow run logs via shared IEventBus.
+  // Sends all events for a run as `workflow.log` entries with jobId/stepId context.
+  server.route({
+    method: 'GET',
+    url: `${basePath}/workflows/runs/:runId/logs`,
+    handler: async (request, reply) => {
+      const runId = getRunId(request.params)
+      const query = request.query as { idleTimeoutMs?: string }
+      const idleTimeout = query.idleTimeoutMs ? parseInt(query.idleTimeoutMs, 10) : IDLE_TIMEOUT_MS
+
+      reply.hijack()
+      const raw = reply.raw
+
+      const origin = request.headers.origin
+      if (typeof origin === 'string' && (origin === 'http://localhost:3000' || origin === 'http://localhost:5173')) {
+        raw.setHeader('Access-Control-Allow-Origin', origin)
+        raw.setHeader('Access-Control-Allow-Credentials', 'true')
       }
-      throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec must match WorkflowSpec schema')
-    }
-    return result.data
-  }
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value)
-      if (!parsed || typeof parsed !== 'object') {
-        throw new Error('inlineSpec parsed to non-object')
+      raw.setHeader('Content-Type', 'text/event-stream')
+      raw.setHeader('Cache-Control', 'no-cache, no-transform')
+      raw.setHeader('Connection', 'keep-alive')
+      raw.flushHeaders?.()
+      raw.write(': connected\n\n')
+
+      const sentLogIds = new Set<string>()
+
+      const sendLog = (event: { type: string; runId: string; jobId?: string; stepId?: string; payload?: unknown; timestamp?: string }) => {
+        if (raw.writableEnded) {return}
+        const ts = event.timestamp ?? new Date().toISOString()
+        const dedup = `${event.type}:${event.jobId ?? ''}:${event.stepId ?? ''}:${ts}`
+        if (sentLogIds.has(dedup)) {return}
+        sentLogIds.add(dedup)
+        raw.write(`event: workflow.log\n`)
+        raw.write(`data: ${JSON.stringify({
+          type: event.type,
+          runId: event.runId,
+          jobId: event.jobId,
+          stepId: event.stepId,
+          payload: event.payload,
+          timestamp: ts,
+        })}\n\n`)
       }
-      const result = WorkflowSpecSchema.safeParse(parsed)
-      if (!result.success) {
-        if ((request as any).kbLogger) {
-          (request as any).kbLogger.error('Invalid inline workflow spec JSON', undefined, { issues: result.error.issues });
+
+      // Replay history for logs
+      let logsAlreadyFinished = false
+      try {
+        const cache = platform.cache
+        if (cache?.zrangebyscore) {
+          const stored = await cache.zrangebyscore(EVENT_BUS_KEY, 0, Date.now())
+          for (const rawStr of stored) {
+            try {
+              const wrapper = JSON.parse(rawStr) as { data: { type: string; runId: string; jobId?: string; stepId?: string; payload?: unknown; timestamp?: string } }
+              const ev = wrapper.data
+              if (ev.runId !== runId) {continue}
+              sendLog(ev)
+              if (TERMINAL_EVENT_TYPES.includes(ev.type)) {logsAlreadyFinished = true}
+            } catch { /* skip */ }
+          }
         }
-        throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec JSON must match WorkflowSpec schema')
-      }
-      return result.data
-    } catch (error) {
-      if ((request as any).kbLogger) {
-        (request as any).kbLogger.error('Failed to parse inline workflow spec', undefined, { err: error });
-      }
-      throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec must be valid JSON object')
-    }
-  }
-  throw createError(400, 'WF_INVALID_SPEC', 'inlineSpec must be an object or JSON string')
-}
+      } catch { /* cache unavailable */ }
 
-function resolveIdempotencyFromHeaders(headers: Record<string, unknown>): string | undefined {
-  const header = headers['x-idempotency-key']
-  if (!header) {
-    return undefined
-  }
-  return Array.isArray(header) ? header[0] : String(header)
-}
+      if (logsAlreadyFinished) {
+        raw.write(`event: workflow.done\ndata: {}\n\n`)
+        raw.end()
+        return
+      }
 
-function resolveActor(headers: Record<string, unknown>): string {
-  const actorHeader = headers['x-user-id'] ?? headers['x-actor'] ?? headers['x-user']
-  if (!actorHeader) {
-    return 'rest-api'
-  }
-  return Array.isArray(actorHeader) ? actorHeader[0] : String(actorHeader)
+      let idleTimer: ReturnType<typeof setTimeout> | null = null
+
+      const resetIdle = () => {
+        if (idleTimer) {clearTimeout(idleTimer)}
+        idleTimer = setTimeout(() => {
+          cleanup()
+        }, idleTimeout)
+      }
+
+      const keepAliveTimer = setInterval(() => {
+        if (raw.writableEnded) {return}
+        raw.write(': keep-alive\n\n')
+      }, KEEP_ALIVE_MS)
+
+      const unsubscribe = platform.eventBus.subscribe(WORKFLOW_REDIS_CHANNEL, async (rawEvent: unknown) => {
+        const event = rawEvent as { type: string; runId: string; jobId?: string; stepId?: string; payload?: unknown; timestamp?: string }
+        if (event.runId !== runId) {return}
+        sendLog(event)
+        resetIdle()
+        if (TERMINAL_EVENT_TYPES.includes(event.type)) {
+          cleanup()
+        }
+      })
+
+      const cleanup = () => {
+        unsubscribe()
+        if (idleTimer) {clearTimeout(idleTimer)}
+        clearInterval(keepAliveTimer)
+        if (!raw.writableEnded) {
+          raw.write(`event: workflow.done\ndata: {}\n\n`)
+          raw.end()
+        }
+      }
+
+      resetIdle()
+      request.raw.on('close', cleanup)
+    },
+  })
 }
 
 function getRunId(params: unknown): string {
   const runId = (params as { runId?: unknown } | undefined)?.runId
   if (!runId || typeof runId !== 'string') {
-    throw createError(400, 'WF_RUN_ID_REQUIRED', 'runId must be provided')
+    const error = new Error('runId must be provided')
+    ;(error as any).statusCode = 400
+    ;(error as any).code = 'WF_RUN_ID_REQUIRED'
+    throw error
   }
   return runId
-}
-
-function createError(statusCode: number, code: string, message: string) {
-  const error = new Error(message)
-  ;(error as any).statusCode = statusCode
-  ;(error as any).code = code
-  return error
 }

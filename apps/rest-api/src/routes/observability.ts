@@ -82,7 +82,7 @@ export async function registerObservabilityRoutes(
           });
         }
 
-        const stats = await response.json();
+        const stats = await response.json() as any;
 
         fastify.log.debug({
           totalEntries: stats.totalEntries,
@@ -98,7 +98,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to fetch State Broker stats', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to fetch State Broker stats', error instanceof Error ? error : new Error(String(error)));
 
         // Check if it's a timeout error
         const isTimeout = error instanceof Error && error.name === 'AbortError';
@@ -109,7 +109,7 @@ export async function registerObservabilityRoutes(
             code: isTimeout ? 'STATE_BROKER_TIMEOUT' : 'STATE_BROKER_ERROR',
             message: isTimeout
               ? 'State Broker daemon did not respond in time'
-              : error instanceof Error ? error.message : 'Unknown error',
+              : error instanceof Error ? error.message : String(error),
             details: {
               isTimeout,
             },
@@ -160,7 +160,7 @@ export async function registerObservabilityRoutes(
       try {
         fastify.log.debug({ cwd: repoRoot }, 'Executing DevKit health check (cache miss)');
 
-        const { stdout, stderr } = await execAsync('npx kb-devkit-health --json --quick', {
+        const { stdout, stderr } = await execAsync('npx kb-devkit-health --json', {
           cwd: repoRoot,
           timeout: 30000, // 30s timeout
           env: {
@@ -201,6 +201,7 @@ export async function registerObservabilityRoutes(
           meta: {
             source: 'devkit-cli',
             repoRoot,
+            command: 'npx kb-devkit-health --json',
             cached: false,
             cachedAt: now,
             expiresAt,
@@ -208,56 +209,26 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        // DevKit returns exit code 1 when there are critical issues,
-        // but stdout still contains valid JSON - treat this as success
+        // Try to extract partial data from error's stdout
+        let partialData: unknown = null;
         if (error && typeof error === 'object' && 'stdout' in error) {
           try {
-            const health = JSON.parse((error as { stdout: string }).stdout);
-            const expiresAt = now + DEVKIT_CACHE_TTL_MS;
-
-            // Cache the result even with exit code 1 (critical issues found)
-            if (platform?.cache) {
-              try {
-                await platform.cache.set(DEVKIT_CACHE_KEY, {
-                  data: health,
-                  timestamp: now,
-                  expiresAt,
-                }, DEVKIT_CACHE_TTL_MS);
-                fastify.log.debug({
-                  healthScore: health.score,
-                  grade: health.grade,
-                  hasCriticalIssues: (health.criticalIssues?.length ?? 0) > 0,
-                }, 'DevKit health check completed (with issues) and cached');
-              } catch (cacheError) {
-                fastify.log.warn({ err: cacheError }, 'Failed to write to platform.cache');
-              }
-            }
-
-            return {
-              ok: true,
-              data: health,
-              meta: {
-                source: 'devkit-cli',
-                repoRoot,
-                cached: false,
-                cachedAt: now,
-                expiresAt,
-                ttlSeconds: DEVKIT_CACHE_TTL_MS / 1000,
-                exitCode: (error as { code?: number }).code ?? 1,
-              },
-            };
+            partialData = JSON.parse((error as { stdout: string }).stdout);
           } catch {
-            // JSON parse failed - real error
+            partialData = null;
           }
         }
 
-        platform.logger.error('Failed to execute DevKit health check', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to execute DevKit health check', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
           error: {
             code: 'DEVKIT_ERROR',
             message: error instanceof Error ? error.message : 'Failed to execute DevKit health check',
+            details: {
+              partialData,
+            },
           },
         });
       }
@@ -373,7 +344,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to fetch system metrics', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to fetch system metrics', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -438,7 +409,7 @@ export async function registerObservabilityRoutes(
           },
         },
       },
-    }, async (request, reply) => {
+    }, async (request, reply: any) => {
       if (!historicalMetrics) {
         return reply.code(503).send({
           ok: false,
@@ -482,7 +453,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to query historical metrics', error instanceof Error ? error : new Error(String(error)), { query });
+        platform?.logger.error('Failed to query historical metrics', error instanceof Error ? error : new Error(String(error)), { query });
 
         return reply.code(500).send({
           ok: false,
@@ -543,7 +514,7 @@ export async function registerObservabilityRoutes(
           },
         },
       },
-    }, async (request, reply) => {
+    }, async (request, reply: any) => {
       if (!historicalMetrics) {
         return reply.code(503).send({
           ok: false,
@@ -583,7 +554,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to query heatmap data', error instanceof Error ? error : new Error(String(error)), { query });
+        platform?.logger.error('Failed to query heatmap data', error instanceof Error ? error : new Error(String(error)), { query });
 
         return reply.code(500).send({
           ok: false,
@@ -657,7 +628,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        fastify.log.error('Failed to list incidents', error);
+        fastify.log.error({ err: error }, 'Failed to list incidents');
 
         return reply.code(500).send({
           ok: false,
@@ -710,7 +681,7 @@ export async function registerObservabilityRoutes(
         }
 
         // Track analytics
-        if (platform.analytics) {
+        if (platform?.analytics) {
           platform.analytics.track('incident.viewed', {
             incidentId: id,
             type: incident.type,
@@ -727,7 +698,7 @@ export async function registerObservabilityRoutes(
           data: incident,
         };
       } catch (error) {
-        fastify.log.error('Failed to get incident', error);
+        fastify.log.error({ err: error }, 'Failed to get incident');
 
         return reply.code(500).send({
           ok: false,
@@ -792,7 +763,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to create incident', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to create incident', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -856,7 +827,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to query incidents', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to query incidents', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -923,7 +894,7 @@ export async function registerObservabilityRoutes(
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to resolve incident', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to resolve incident', error instanceof Error ? error : new Error(String(error)));
 
         return reply.code(500).send({
           ok: false,
@@ -1003,7 +974,8 @@ export async function registerObservabilityRoutes(
             });
 
             if (metricsResponse.ok) {
-              const response = await metricsResponse.json();
+               
+              const response = await metricsResponse.json() as any;
               // API returns { ok: true, data: {...} } wrapper
               const metrics = response.data ?? response;
 
@@ -1115,7 +1087,7 @@ Be concise but thorough. Use markdown formatting.`;
           },
         };
       } catch (error) {
-        platform.logger.error('Failed to generate insights', error instanceof Error ? error : new Error(String(error)));
+        platform?.logger.error('Failed to generate insights', error instanceof Error ? error : new Error(String(error)));
 
         // Track error analytics
         if (platform?.analytics) {
@@ -1201,7 +1173,7 @@ Be concise but thorough. Use markdown formatting.`;
         await incidentStorage.updateAIAnalysis(id, analysis);
 
         // Track analytics
-        if (platform.analytics) {
+        if (platform?.analytics) {
           platform.analytics.track('incident.analyzed', {
             incidentId: id,
             type: incident.type,
@@ -1221,10 +1193,10 @@ Be concise but thorough. Use markdown formatting.`;
           },
         };
       } catch (error) {
-        fastify.log.error('Failed to analyze incident', error);
+        fastify.log.error({ err: error }, 'Failed to analyze incident');
 
         // Track error in analytics
-        if (platform.analytics) {
+        if (platform?.analytics) {
           platform.analytics.track('incident.analysis_error', {
             incidentId: id,
             error: error instanceof Error ? error.message : 'Unknown error',
@@ -1289,11 +1261,11 @@ Be concise but thorough. Use markdown formatting.`;
           },
         });
 
-        fastify.log.info('Test incident created', { id: incident.id });
+        fastify.log.info({ id: incident.id }, 'Test incident created');
 
         return { ok: true, data: incident };
       } catch (error) {
-        fastify.log.error('Failed to create test incident', error);
+        fastify.log.error({ err: error }, 'Failed to create test incident');
         return reply.code(500).send({
           ok: false,
           error: {
@@ -1317,7 +1289,7 @@ Be concise but thorough. Use markdown formatting.`;
       // Generate errors
       for (let i = 0; i < errorCount; i++) {
         // Log errors to platform
-        platform.logger.error(`Test error ${i + 1}/${errorCount}`, {
+        platform?.logger.error(`Test error ${i + 1}/${errorCount}`, undefined, {
           testMode: true,
           errorNumber: i + 1,
           totalErrors: errorCount,
@@ -1371,14 +1343,11 @@ Be concise but thorough. Use markdown formatting.`;
     fastify.post(path, async (request, reply) => {
       const { successCount = 10, errorCount = 50 } = request.body as any;
 
-      fastify.log.info('Generating bulk requests for incident testing', {
-        successCount,
-        errorCount,
-      });
+      fastify.log.info({ successCount, errorCount }, 'Generating bulk requests for incident testing');
 
       // Generate successful requests
       for (let i = 0; i < successCount; i++) {
-        platform.logger.info(`Bulk test - success ${i + 1}/${successCount}`);
+        platform?.logger.info(`Bulk test - success ${i + 1}/${successCount}`);
       }
 
       // Generate error requests with varied endpoints
@@ -1401,15 +1370,11 @@ Be concise but thorough. Use markdown formatting.`;
         ];
         const errorType = errorTypes[i % errorTypes.length];
 
-        platform.logger.error(`${errorType}: ${endpoint}`, {
+        platform?.logger.error(`${errorType}: ${endpoint}`, undefined, {
           testMode: true,
           bulkTest: true,
           errorIndex: i,
-          endpoint, // Add endpoint for grouping
-          err: {
-            message: errorType,
-            stack: `Error: ${errorType}\n  at testHandler (test.ts:${100 + i})\n  at route (routes.ts:${200 + i})`,
-          },
+          endpoint,
         });
       }
 

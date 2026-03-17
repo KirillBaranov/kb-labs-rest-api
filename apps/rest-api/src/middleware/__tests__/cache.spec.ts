@@ -6,7 +6,7 @@
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+
 import { generateETag, registerCacheMiddleware } from '../cache';
 
 describe('generateETag', () => {
@@ -56,7 +56,7 @@ describe('generateETag', () => {
 });
 
 describe('registerCacheMiddleware', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
 
   beforeEach(async () => {
     app = Fastify({ logger: false });
@@ -156,7 +156,7 @@ describe('registerCacheMiddleware', () => {
   describe('streaming responses', () => {
     it('should skip cache for SSE responses', async () => {
       const sseApp = Fastify({ logger: false });
-      registerCacheMiddleware(sseApp);
+      registerCacheMiddleware(sseApp as any);
 
       sseApp.get('/events', async (request, reply) => {
         reply.header('content-type', 'text/event-stream');

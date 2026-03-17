@@ -90,7 +90,7 @@ export class IncidentAnalyzer {
 
       this.log('debug', 'LLM response received', {
         length: result.content.length,
-        tokensUsed: result.usage?.totalTokens,
+        tokensUsed: result.usage ? (result.usage.promptTokens + result.usage.completionTokens) : undefined,
       });
 
       // Parse LLM response

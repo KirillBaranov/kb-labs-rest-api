@@ -16,6 +16,10 @@ interface LLMUsageStats {
   totalTokens: number;
   totalCost: number;
   costPer1KTokens: number; // Enhanced: Cost efficiency metric
+  // Cache savings
+  totalCacheReadTokens: number;
+  totalBillableTokens: number;
+  totalCacheSavingsUsd: number;
   byModel: Record<
     string,
     {
@@ -32,6 +36,10 @@ interface LLMUsageStats {
       p50DurationMs: number;
       p95DurationMs: number;
       p99DurationMs: number;
+      // Cache savings per model
+      cacheReadTokens: number;
+      billableTokens: number;
+      cacheSavingsUsd: number;
     }
   >;
   errors: number;
@@ -184,10 +192,7 @@ async function fetchAllEventsBatched(
 
   // Warn if we hit the safety limit
   if (allEvents.length >= MAX_EVENTS) {
-    fastify.log.warn(
-      `Hit max events limit (${MAX_EVENTS}) for query. Some events excluded from stats.`,
-      { query }
-    );
+    fastify.log.warn({ query }, `Hit max events limit (${MAX_EVENTS}) for query. Some events excluded from stats.`);
   }
 
   return allEvents;
@@ -259,24 +264,15 @@ export async function registerAdaptersRoutes(
           fastify
         );
 
-        // Debug logging
-        fastify.log.debug('LLM analytics query results', {
-          completedCount: completedEvents.length,
-          errorCount: errorEvents.length,
-          sampleEvent: completedEvents[0] ? {
-            schema: (completedEvents[0] as any).schema,
-            type: completedEvents[0].type,
-            hasPayload: !!(completedEvents[0] as any).payload,
-            hasProperties: !!(completedEvents[0] as any).properties,
-          } : null,
-        });
-
         // Aggregate statistics
         const stats: LLMUsageStats = {
           totalRequests: 0,
           totalTokens: 0,
           totalCost: 0,
           costPer1KTokens: 0,
+          totalCacheReadTokens: 0,
+          totalBillableTokens: 0,
+          totalCacheSavingsUsd: 0,
           byModel: {},
           errors: errorEvents.length,
           errorBreakdown: {
@@ -308,10 +304,16 @@ export async function registerAdaptersRoutes(
           const totalTokens = Number(props.totalTokens || promptTokens + completionTokens);
           const estimatedCost = Number(props.estimatedCost || 0);
           const durationMs = Number(props.durationMs || 0);
+          const cacheReadTokens = Number(props.cacheReadTokens || 0);
+          const billableTokens = Number(props.billableTotalTokens || totalTokens);
+          const cacheSavingsUsd = Number(props.estimatedCacheSavingsUsd || 0);
 
           stats.totalRequests++;
           stats.totalTokens += totalTokens;
           stats.totalCost += estimatedCost;
+          stats.totalCacheReadTokens += cacheReadTokens;
+          stats.totalBillableTokens += billableTokens;
+          stats.totalCacheSavingsUsd += cacheSavingsUsd;
 
           if (!stats.byModel[model]) {
             stats.byModel[model] = {
@@ -327,6 +329,9 @@ export async function registerAdaptersRoutes(
               p50DurationMs: 0,
               p95DurationMs: 0,
               p99DurationMs: 0,
+              cacheReadTokens: 0,
+              billableTokens: 0,
+              cacheSavingsUsd: 0,
             };
             durationsByModel[model] = [];
           }
@@ -337,6 +342,9 @@ export async function registerAdaptersRoutes(
           modelStats.completionTokens += completionTokens;
           modelStats.totalTokens += totalTokens;
           modelStats.cost += estimatedCost;
+          modelStats.cacheReadTokens += cacheReadTokens;
+          modelStats.billableTokens += billableTokens;
+          modelStats.cacheSavingsUsd += cacheSavingsUsd;
           modelStats.avgDurationMs =
             (modelStats.avgDurationMs * (modelStats.requests - 1) + durationMs) / modelStats.requests;
 
@@ -419,7 +427,7 @@ export async function registerAdaptersRoutes(
           data: stats,
           meta: {
             source: 'analytics-adapter',
-            totalEvents: completedEvents.total,
+            totalEvents: completedEvents.length,
           },
         };
       } catch (error) {

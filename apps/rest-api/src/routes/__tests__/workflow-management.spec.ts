@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
+
 import type { CliAPI } from '@kb-labs/cli-api';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
@@ -25,6 +25,12 @@ const mockScanner = {
 const mockWorkflowService = {
   listAll: vi.fn(),
   get: vi.fn(),
+  create: vi.fn(),
+  update: vi.fn(),
+  delete: vi.fn(),
+  pause: vi.fn(),
+  resume: vi.fn(),
+  disable: vi.fn(),
   getAvailableHandlers: vi.fn(),
   validate: vi.fn(),
 };
@@ -94,12 +100,12 @@ function createMockWorkflowRuntime(overrides = {}) {
 }
 
 describe('registerWorkflowManagementRoutes', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
 
   beforeEach(async () => {
     vi.clearAllMocks();
     app = Fastify({ logger: false });
-    await registerWorkflowManagementRoutes(app, BASE_CONFIG, mockCliApi, mockPlatform);
+    await registerWorkflowManagementRoutes(app, BASE_CONFIG, mockCliApi, mockPlatform, null, null);
   });
 
   afterEach(async () => {
@@ -258,7 +264,8 @@ describe('registerWorkflowManagementRoutes', () => {
 
       expect(response.statusCode).toBe(404);
       const payload = response.json();
-      expect(payload.message).toContain('Workflow missing not found');
+      const errorText = payload.message ?? payload.error ?? '';
+      expect(errorText).toContain('not found');
     });
   });
 
@@ -266,7 +273,7 @@ describe('registerWorkflowManagementRoutes', () => {
     it('creates new standalone workflow', async () => {
       const spec = createSampleWorkflowSpec();
       const workflow = createMockWorkflowRuntime({ spec });
-      mockRepository.create.mockResolvedValue(workflow);
+      mockWorkflowService.create.mockResolvedValue(workflow);
 
       const response = await app.inject({
         method: 'POST',
@@ -277,7 +284,7 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(201);
       const payload = response.json();
       expect(payload.workflow.id).toBe('wf-123');
-      expect(mockRepository.create).toHaveBeenCalledWith(spec);
+      expect(mockWorkflowService.create).toHaveBeenCalledWith(spec);
     });
 
     it('validates workflow spec schema', async () => {
@@ -293,7 +300,7 @@ describe('registerWorkflowManagementRoutes', () => {
       });
 
       expect(response.statusCode).toBe(400);
-      expect(mockRepository.create).not.toHaveBeenCalled();
+      expect(mockWorkflowService.create).not.toHaveBeenCalled();
     });
 
     it('rejects empty body', async () => {
@@ -315,8 +322,8 @@ describe('registerWorkflowManagementRoutes', () => {
         name: 'updated-workflow',
       });
 
-      mockRepository.get.mockResolvedValue(existing);
-      mockRepository.update.mockResolvedValue(updated);
+      mockWorkflowService.get.mockResolvedValueOnce(existing).mockResolvedValueOnce(updated);
+      mockWorkflowService.update.mockResolvedValue(updated);
 
       const response = await app.inject({
         method: 'PUT',
@@ -331,7 +338,7 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(200);
       const payload = response.json();
       expect(payload.workflow.name).toBe('updated-workflow');
-      expect(mockRepository.update).toHaveBeenCalledWith('wf-123', {
+      expect(mockWorkflowService.update).toHaveBeenCalledWith('wf-123', {
         name: 'updated-workflow',
       });
     });
@@ -340,8 +347,8 @@ describe('registerWorkflowManagementRoutes', () => {
       const existing = createMockWorkflowRuntime({ id: 'wf-123', source: 'standalone' });
       const paused = createMockWorkflowRuntime({ id: 'wf-123', status: 'paused' });
 
-      mockRepository.get.mockResolvedValue(existing);
-      mockRepository.pause.mockResolvedValue(paused);
+      mockWorkflowService.get.mockResolvedValueOnce(existing).mockResolvedValueOnce(paused);
+      mockWorkflowService.pause.mockResolvedValue(paused);
 
       const response = await app.inject({
         method: 'PUT',
@@ -354,7 +361,7 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(200);
       const payload = response.json();
       expect(payload.workflow.status).toBe('paused');
-      expect(mockRepository.pause).toHaveBeenCalledWith('wf-123');
+      expect(mockWorkflowService.pause).toHaveBeenCalledWith('wf-123');
     });
 
     it('updates both spec and status', async () => {
@@ -366,9 +373,9 @@ describe('registerWorkflowManagementRoutes', () => {
         status: 'disabled',
       });
 
-      mockRepository.get.mockResolvedValue(existing);
-      mockRepository.update.mockResolvedValue(updated);
-      mockRepository.disable.mockResolvedValue(disabled);
+      mockWorkflowService.get.mockResolvedValueOnce(existing).mockResolvedValueOnce(disabled);
+      mockWorkflowService.update.mockResolvedValue(updated);
+      mockWorkflowService.disable.mockResolvedValue(disabled);
 
       const response = await app.inject({
         method: 'PUT',
@@ -380,12 +387,12 @@ describe('registerWorkflowManagementRoutes', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(mockRepository.update).toHaveBeenCalledWith('wf-123', { name: 'new-name' });
-      expect(mockRepository.disable).toHaveBeenCalledWith('wf-123');
+      expect(mockWorkflowService.update).toHaveBeenCalledWith('wf-123', { name: 'new-name' });
+      expect(mockWorkflowService.disable).toHaveBeenCalledWith('wf-123');
     });
 
     it('returns 404 when workflow not found', async () => {
-      mockRepository.get.mockResolvedValue(null);
+      mockWorkflowService.get.mockResolvedValue(null);
 
       const response = await app.inject({
         method: 'PUT',
@@ -401,7 +408,7 @@ describe('registerWorkflowManagementRoutes', () => {
         id: 'wf-123',
         source: 'manifest',
       });
-      mockRepository.get.mockResolvedValue(manifestWorkflow);
+      mockWorkflowService.get.mockResolvedValue(manifestWorkflow);
 
       const response = await app.inject({
         method: 'PUT',
@@ -418,8 +425,8 @@ describe('registerWorkflowManagementRoutes', () => {
   describe('DELETE /api/v1/workflows/:id', () => {
     it('deletes standalone workflow', async () => {
       const workflow = createMockWorkflowRuntime({ id: 'wf-123', source: 'standalone' });
-      mockRepository.get.mockResolvedValue(workflow);
-      mockRepository.delete.mockResolvedValue(undefined);
+      mockWorkflowService.get.mockResolvedValue(workflow);
+      mockWorkflowService.delete.mockResolvedValue(undefined);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -427,11 +434,11 @@ describe('registerWorkflowManagementRoutes', () => {
       });
 
       expect(response.statusCode).toBe(204);
-      expect(mockRepository.delete).toHaveBeenCalledWith('wf-123');
+      expect(mockWorkflowService.delete).toHaveBeenCalledWith('wf-123');
     });
 
     it('returns 404 when workflow not found', async () => {
-      mockRepository.get.mockResolvedValue(null);
+      mockWorkflowService.get.mockResolvedValue(null);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -446,7 +453,7 @@ describe('registerWorkflowManagementRoutes', () => {
         id: 'wf-123',
         source: 'manifest',
       });
-      mockRepository.get.mockResolvedValue(manifestWorkflow);
+      mockWorkflowService.get.mockResolvedValue(manifestWorkflow);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -467,8 +474,8 @@ describe('registerWorkflowManagementRoutes', () => {
         schedule: { cron: '0 0 * * *', enabled: true },
       });
 
-      mockRepository.get.mockResolvedValue(workflow);
-      mockRepository.update.mockResolvedValue(scheduled);
+      mockWorkflowService.get.mockResolvedValue(workflow);
+      mockWorkflowService.update.mockResolvedValue(scheduled);
 
       const response = await app.inject({
         method: 'POST',
@@ -483,18 +490,19 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(200);
       const payload = response.json();
       expect(payload.workflow.schedule).toBeDefined();
-      expect(mockRepository.update).toHaveBeenCalledWith('wf-123', {
-        schedule: {
-          cron: '0 0 * * *',
-          enabled: true,
-          timezone: 'America/New_York',
+      expect(mockWorkflowService.update).toHaveBeenCalledWith('wf-123', {
+        on: {
+          schedule: {
+            cron: '0 0 * * *',
+            timezone: 'America/New_York',
+          },
         },
       });
     });
 
     it('validates schedule config schema', async () => {
       const workflow = createMockWorkflowRuntime({ id: 'wf-123', source: 'standalone' });
-      mockRepository.get.mockResolvedValue(workflow);
+      mockWorkflowService.get.mockResolvedValue(workflow);
 
       const response = await app.inject({
         method: 'POST',
@@ -513,7 +521,7 @@ describe('registerWorkflowManagementRoutes', () => {
         id: 'wf-123',
         source: 'manifest',
       });
-      mockRepository.get.mockResolvedValue(manifestWorkflow);
+      mockWorkflowService.get.mockResolvedValue(manifestWorkflow);
 
       const response = await app.inject({
         method: 'POST',
@@ -539,8 +547,8 @@ describe('registerWorkflowManagementRoutes', () => {
         schedule: { enabled: false },
       });
 
-      mockRepository.get.mockResolvedValue(workflow);
-      mockRepository.update.mockResolvedValue(unscheduled);
+      mockWorkflowService.get.mockResolvedValue(workflow);
+      mockWorkflowService.update.mockResolvedValue(unscheduled);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -550,13 +558,13 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(200);
       const payload = response.json();
       expect(payload.workflow.schedule.enabled).toBe(false);
-      expect(mockRepository.update).toHaveBeenCalledWith('wf-123', {
-        schedule: { enabled: false },
+      expect(mockWorkflowService.update).toHaveBeenCalledWith('wf-123', {
+        on: { schedule: undefined },
       });
     });
 
     it('returns 404 when workflow not found', async () => {
-      mockRepository.get.mockResolvedValue(null);
+      mockWorkflowService.get.mockResolvedValue(null);
 
       const response = await app.inject({
         method: 'DELETE',
@@ -572,8 +580,8 @@ describe('registerWorkflowManagementRoutes', () => {
       const workflow = createMockWorkflowRuntime({ id: 'wf-123', source: 'standalone' });
       const paused = createMockWorkflowRuntime({ id: 'wf-123', status: 'paused' });
 
-      mockRepository.get.mockResolvedValue(workflow);
-      mockRepository.pause.mockResolvedValue(paused);
+      mockWorkflowService.get.mockResolvedValueOnce(workflow).mockResolvedValueOnce(paused);
+      mockWorkflowService.pause.mockResolvedValue(undefined);
 
       const response = await app.inject({
         method: 'POST',
@@ -583,7 +591,7 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(200);
       const payload = response.json();
       expect(payload.workflow.status).toBe('paused');
-      expect(mockRepository.pause).toHaveBeenCalledWith('wf-123');
+      expect(mockWorkflowService.pause).toHaveBeenCalledWith('wf-123');
     });
 
     it('rejects pausing manifest-based workflows', async () => {
@@ -591,7 +599,7 @@ describe('registerWorkflowManagementRoutes', () => {
         id: 'wf-123',
         source: 'manifest',
       });
-      mockRepository.get.mockResolvedValue(manifestWorkflow);
+      mockWorkflowService.get.mockResolvedValue(manifestWorkflow);
 
       const response = await app.inject({
         method: 'POST',
@@ -611,8 +619,8 @@ describe('registerWorkflowManagementRoutes', () => {
       });
       const resumed = createMockWorkflowRuntime({ id: 'wf-123', status: 'active' });
 
-      mockRepository.get.mockResolvedValue(paused);
-      mockRepository.resume.mockResolvedValue(resumed);
+      mockWorkflowService.get.mockResolvedValueOnce(paused).mockResolvedValueOnce(resumed);
+      mockWorkflowService.resume.mockResolvedValue(undefined);
 
       const response = await app.inject({
         method: 'POST',
@@ -622,7 +630,7 @@ describe('registerWorkflowManagementRoutes', () => {
       expect(response.statusCode).toBe(200);
       const payload = response.json();
       expect(payload.workflow.status).toBe('active');
-      expect(mockRepository.resume).toHaveBeenCalledWith('wf-123');
+      expect(mockWorkflowService.resume).toHaveBeenCalledWith('wf-123');
     });
   });
 

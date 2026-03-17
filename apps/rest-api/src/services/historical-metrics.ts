@@ -4,7 +4,7 @@
  */
 
 import type { CacheAdapter } from '@kb-labs/plugin-contracts';
-import { metricsCollector } from '../middleware/metrics';
+import { metricsCollector } from '../middleware/metrics.js';
 
 /**
  * Historical data point
@@ -161,9 +161,6 @@ export class HistoricalMetricsCollector {
         average: metrics.latency.average,
         min: metrics.latency.min === Infinity ? 0 : metrics.latency.min,
         max: metrics.latency.max,
-        p50: metrics.latency.p50 ?? undefined,
-        p95: metrics.latency.p95 ?? undefined,
-        p99: metrics.latency.p99 ?? undefined,
       },
       uptime: (now - metrics.timestamps.startTime) / 1000,
       perPlugin: metrics.perPlugin.map(p => ({
@@ -204,7 +201,7 @@ export class HistoricalMetricsCollector {
    */
   private async appendToTimeSeries(range: keyof typeof DEFAULT_CONFIG.maxPoints, snapshot: MetricsSnapshot, ttlMs: number): Promise<void> {
     const key = `metrics:history:${range}`;
-    const maxPoints = this.config.maxPoints[range];
+    const maxPoints = this.config.maxPoints[range] ?? 120;
 
     // Get existing time series
     let timeSeries = await this.cache.get<MetricsSnapshot[]>(key);
@@ -239,7 +236,7 @@ export class HistoricalMetricsCollector {
 
     // Calculate current day and hour
     const date = new Date(snapshot.timestamp);
-    const day = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][date.getDay()];
+    const day = (['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const)[date.getDay() as 0|1|2|3|4|5|6];
     const hour = date.getHours();
 
     // Update each metric type
@@ -258,9 +255,9 @@ export class HistoricalMetricsCollector {
         value = snapshot.requests.total;
       }
 
-      if (cellIndex >= 0) {
+      if (cellIndex >= 0 && cells[cellIndex]) {
         // Update existing cell (exponential moving average)
-        cells[cellIndex].value = cells[cellIndex].value * 0.9 + value * 0.1;
+        cells[cellIndex]!.value = cells[cellIndex]!.value * 0.9 + value * 0.1;
       } else {
         // Add new cell
         cells.push({ day, hour, value });
@@ -409,7 +406,7 @@ export class HistoricalMetricsCollector {
     const aggregated: HistoricalDataPoint[] = [];
 
     let bucket: HistoricalDataPoint[] = [];
-    let bucketStart = Math.floor(dataPoints[0].timestamp / intervalMs) * intervalMs;
+    let bucketStart = Math.floor(dataPoints[0]!.timestamp / intervalMs) * intervalMs;
 
     for (const point of dataPoints) {
       const pointBucket = Math.floor(point.timestamp / intervalMs) * intervalMs;

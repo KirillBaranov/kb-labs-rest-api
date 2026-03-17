@@ -4,7 +4,7 @@
  */
 
 import type { IncidentStorage, IncidentCreatePayload, IncidentSeverity, IncidentType, RelatedData } from './incident-storage';
-import { metricsCollector } from '../middleware/metrics';
+import { metricsCollector } from '../middleware/metrics.js';
 import { platform } from '@kb-labs/core-runtime';
 import type { LogLevel } from '@kb-labs/core-platform';
 
@@ -553,7 +553,7 @@ export class IncidentDetector {
           const endpoint = pathParts.join(' ');
           // Get most common status code
           const statusCodes = Object.keys(h.byStatus);
-          const mostCommonStatus = statusCodes.length > 0 ? parseInt(statusCodes[0], 10) : undefined;
+          const mostCommonStatus = statusCodes.length > 0 ? parseInt(statusCodes[0]!, 10) : undefined;
 
           return {
             endpoint,

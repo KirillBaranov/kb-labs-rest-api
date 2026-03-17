@@ -6,9 +6,20 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
-import type { TenantRateLimiter, RateLimitResult } from '@kb-labs/tenant';
+import type { FastifyRequest } from 'fastify';
+
 import { extractTenantId, createRateLimitMiddleware } from '../rate-limit';
+
+interface TenantRateLimiter {
+  checkLimit(tenantId: string, resource: string): Promise<RateLimitResult>;
+}
+
+interface RateLimitResult {
+  allowed: boolean;
+  limit: number;
+  remaining: number;
+  resetAt: number;
+}
 
 describe('extractTenantId', () => {
   const originalEnv = process.env;
@@ -60,7 +71,7 @@ describe('extractTenantId', () => {
 });
 
 describe('createRateLimitMiddleware', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
   let mockRateLimiter: TenantRateLimiter;
 
   const createMockRateLimiter = (overrides: Partial<RateLimitResult> = {}): TenantRateLimiter => {
@@ -122,7 +133,7 @@ describe('createRateLimitMiddleware', () => {
       const middleware = createRateLimitMiddleware(mockRateLimiter);
       app.addHook('preHandler', middleware);
 
-      app.get('/test', async (request) => {
+      app.get('/test', async (request: FastifyRequest) => {
         capturedTenantId = (request as any).tenantId;
         return { tenantId: capturedTenantId };
       });

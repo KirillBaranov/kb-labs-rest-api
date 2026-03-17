@@ -9,8 +9,8 @@ import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
-import type { PluginsMetricsSnapshot } from '../middleware/metrics';
-import { metricsCollector } from '../middleware/metrics';
+import type { PluginsMetricsSnapshot } from '../middleware/metrics.js';
+import { metricsCollector } from '../middleware/metrics.js';
 
 // Version is injected at build time by tsup define
 declare const __REST_API_VERSION__: string;

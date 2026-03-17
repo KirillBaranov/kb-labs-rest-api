@@ -1,7 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import Fastify from 'fastify'
-import type { FastifyInstance } from 'fastify'
-import type { CliAPI } from '@kb-labs/cli-api'
 import type { RestApiConfig } from '@kb-labs/rest-api-core'
 import { registerWorkflowRoutes } from '../workflows'
 
@@ -18,134 +16,189 @@ const BASE_CONFIG: RestApiConfig = {
   mockMode: false,
 }
 
-const SAMPLE_SPEC = {
-  name: 'demo',
-  version: '1.0.0',
-  on: { manual: true },
-  jobs: {
-    build: {
-      runsOn: 'local',
-      steps: [{ name: 'echo', uses: 'builtin:shell', with: { command: 'echo hello' } }],
+type EventHandler = (event: unknown) => Promise<void>
+let capturedHandlers: EventHandler[] = []
+
+const { mockUnsubscribe, mockSubscribe } = vi.hoisted(() => {
+  const mockUnsubscribe = vi.fn()
+  const mockSubscribe = vi.fn((_channel: string, handler: EventHandler) => {
+    capturedHandlers.push(handler)
+    // Immediately emit a terminal event to close the SSE stream,
+    // so app.inject() resolves instead of hanging.
+    setTimeout(() => {
+      handler({ type: 'run.finished', runId: 'run-123', payload: { status: 'success' } })
+    }, 10)
+    return mockUnsubscribe
+  })
+  return { mockUnsubscribe, mockSubscribe }
+})
+
+vi.mock('@kb-labs/core-runtime', () => ({
+  platform: {
+    eventBus: {
+      subscribe: mockSubscribe,
     },
   },
-}
+}))
 
-function createApp(cliApi: Partial<CliAPI>) {
-  const app = Fastify({ logger: false }) as unknown as FastifyInstance
-  return registerWorkflowRoutes(app, BASE_CONFIG, cliApi as CliAPI).then(() => app)
-}
-
-beforeEach(() => {
-  vi.restoreAllMocks()
-})
+vi.mock('@kb-labs/workflow-constants', () => ({
+  WORKFLOW_REDIS_CHANNEL: 'kb:wf:events',
+}))
 
 describe('registerWorkflowRoutes', () => {
-  it('runs workflow specs provided inline', async () => {
-    const runResponse = { id: 'run-1', status: 'queued' }
-    const cliApi: Partial<CliAPI> = {
-      runWorkflow: vi.fn().mockResolvedValue(runResponse),
-      listWorkflowRuns: vi.fn(),
-      getWorkflowRun: vi.fn(),
-      cancelWorkflowRun: vi.fn(),
-      streamWorkflowLogs: vi.fn(),
-    }
+  let app: ReturnType<typeof Fastify>
 
-    const app = await createApp(cliApi)
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    capturedHandlers = []
+    app = Fastify({ logger: false })
+    await registerWorkflowRoutes(app, BASE_CONFIG)
+  })
 
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/v1/workflows/run',
-      payload: {
-        inlineSpec: SAMPLE_SPEC,
-        idempotency: 'build#42',
-        concurrency: { group: 'branch:main' },
-        metadata: { target: 'ci' },
-      },
-    })
-
-    expect(response.statusCode).toBe(202)
-    expect(response.json()).toEqual({ run: runResponse })
-    expect(cliApi.runWorkflow).toHaveBeenCalledWith(
-      expect.objectContaining({
-        spec: SAMPLE_SPEC,
-        idempotencyKey: 'build#42',
-        concurrencyGroup: 'branch:main',
-        metadata: expect.objectContaining({ source: 'rest', target: 'ci' }),
-      }),
-    )
-
+  afterEach(async () => {
     await app.close()
   })
 
-  it('rejects run requests without inline spec', async () => {
-    const cliApi: Partial<CliAPI> = {
-      runWorkflow: vi.fn(),
-      listWorkflowRuns: vi.fn(),
-      getWorkflowRun: vi.fn(),
-      cancelWorkflowRun: vi.fn(),
-      streamWorkflowLogs: vi.fn(),
-    }
+  describe('GET /workflows/runs/:runId/events (SSE)', () => {
+    it('returns SSE headers and connected comment', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+      })
 
-    const app = await createApp(cliApi)
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/api/v1/workflows/run',
-      payload: {},
+      expect(response.headers['content-type']).toBe('text/event-stream')
+      expect(response.headers['cache-control']).toBe('no-cache, no-transform')
+      expect(response.headers['connection']).toBe('keep-alive')
+      expect(response.body).toContain(': connected')
     })
 
-    expect(response.statusCode).toBe(400)
-    expect(cliApi.runWorkflow).not.toHaveBeenCalled()
+    it('emits workflow.event for matching runId', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+      })
 
-    await app.close()
+      expect(response.body).toContain('event: workflow.event')
+      expect(response.body).toContain('"type":"run.finished"')
+      expect(response.body).toContain('"runId":"run-123"')
+    })
+
+    it('sets CORS headers for localhost:3000', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+        headers: { origin: 'http://localhost:3000' },
+      })
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost:3000')
+      expect(response.headers['access-control-allow-credentials']).toBe('true')
+    })
+
+    it('sets CORS headers for localhost:5173', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+        headers: { origin: 'http://localhost:5173' },
+      })
+
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost:5173')
+    })
+
+    it('does not set CORS headers for other origins', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+        headers: { origin: 'http://evil.com' },
+      })
+
+      expect(response.headers['access-control-allow-origin']).toBeUndefined()
+    })
+
+    it('calls unsubscribe on terminal event', async () => {
+      await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+      })
+
+      expect(mockUnsubscribe).toHaveBeenCalled()
+    })
+
+    it('filters events by runId — ignores other runs', async () => {
+      // Override the mock to emit an event for a different runId first
+      mockSubscribe.mockImplementationOnce((_channel, handler: EventHandler) => {
+        setTimeout(async () => {
+          // Event for a different run — should be ignored
+          await handler({ type: 'step.started', runId: 'other-run', payload: {} })
+          // Terminal event for our run — closes the stream
+          await handler({ type: 'run.finished', runId: 'run-123', payload: {} })
+        }, 10)
+        return mockUnsubscribe
+      })
+
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/events',
+      })
+
+      // Should NOT contain the other-run event
+      expect(response.body).not.toContain('other-run')
+      expect(response.body).toContain('"runId":"run-123"')
+    })
   })
 
-  it('passes list filters to the CLI API', async () => {
-    const cliApi: Partial<CliAPI> = {
-      runWorkflow: vi.fn(),
-      listWorkflowRuns: vi.fn().mockResolvedValue({ runs: [], total: 0 }),
-      getWorkflowRun: vi.fn(),
-      cancelWorkflowRun: vi.fn(),
-      streamWorkflowLogs: vi.fn(),
-    }
+  describe('GET /workflows/runs/:runId/logs (SSE)', () => {
+    it('returns SSE headers and connected comment', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/logs?follow=1',
+      })
 
-    const app = await createApp(cliApi)
-
-    const response = await app.inject({
-      method: 'GET',
-      url: '/api/v1/workflows/runs?status=running&limit=5',
+      expect(response.headers['content-type']).toBe('text/event-stream')
+      expect(response.headers['cache-control']).toBe('no-cache, no-transform')
+      expect(response.headers['connection']).toBe('keep-alive')
+      expect(response.body).toContain(': connected')
     })
 
-    expect(response.statusCode).toBe(200)
-    expect(cliApi.listWorkflowRuns).toHaveBeenCalledWith({ status: 'running', limit: 5 })
+    it('emits workflow.log events', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/logs',
+      })
 
-    await app.close()
-  })
-
-  it('returns 404 when run is not found before streaming logs', async () => {
-    const cliApi: Partial<CliAPI> = {
-      runWorkflow: vi.fn(),
-      listWorkflowRuns: vi.fn(),
-      getWorkflowRun: vi.fn().mockResolvedValue(null),
-      cancelWorkflowRun: vi.fn(),
-      streamWorkflowLogs: vi.fn(),
-    }
-
-    const app = await createApp(cliApi)
-
-    const response = await app.inject({
-      method: 'GET',
-      url: '/api/v1/workflows/runs/missing/logs',
+      expect(response.body).toContain('event: workflow.log')
+      expect(response.body).toContain('"type":"run.finished"')
+      expect(response.body).toContain('"runId":"run-123"')
     })
 
-    expect(response.statusCode).toBe(404)
-    expect(cliApi.streamWorkflowLogs).not.toHaveBeenCalled()
+    it('sets CORS headers for localhost:3000', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/logs',
+        headers: { origin: 'http://localhost:3000' },
+      })
 
-    await app.close()
+      expect(response.headers['access-control-allow-origin']).toBe('http://localhost:3000')
+      expect(response.headers['access-control-allow-credentials']).toBe('true')
+    })
+
+    it('does not set CORS headers for unknown origins', async () => {
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/logs',
+        headers: { origin: 'http://attacker.com' },
+      })
+
+      expect(response.headers['access-control-allow-origin']).toBeUndefined()
+    })
+
+    it('respects custom idleTimeoutMs query param', async () => {
+      // Just verify the route accepts the param without error
+      const response = await app.inject({
+        method: 'GET',
+        url: '/api/v1/workflows/runs/run-123/logs?idleTimeoutMs=5000',
+      })
+
+      expect(response.headers['content-type']).toBe('text/event-stream')
+    })
   })
 })
-
-
-
-
-

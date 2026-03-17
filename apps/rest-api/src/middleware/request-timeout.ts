@@ -25,7 +25,6 @@ export function registerRequestTimeoutGuard(
 
     if (!budget) {
       const normalized =
-        request.routerPath ??
         request.routeOptions?.url ??
         request.url;
       const inferred = normalized ? metricsCollector.getRouteBudget(request.method, normalized) : null;
@@ -58,7 +57,7 @@ export function registerRequestTimeoutGuard(
           message: 'Request timed out',
           meta: {
             method: request.method,
-            route: request.routerPath ?? request.url,
+            route: request.routeOptions?.url ?? request.url,
             timeoutMs: budget,
           },
         });

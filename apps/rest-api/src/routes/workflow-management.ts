@@ -12,7 +12,6 @@ import { WorkflowSpecSchema } from '@kb-labs/workflow-contracts';
 import {
   WorkflowService,
   WorkflowScheduleManager,
-  type WorkflowRuntime,
   type WorkflowExecutor,
 } from '@kb-labs/workflow-engine';
 import { z } from 'zod';
@@ -203,8 +202,16 @@ export async function registerWorkflowManagementRoutes(
       response: responseSchemas,
     },
     handler: async (request, reply) => {
-      const body = createWorkflowBodySchema.parse(request.body ?? {});
-      const workflow = await repository.create(body.spec);
+      let body: z.infer<typeof createWorkflowBodySchema>;
+      try {
+        body = createWorkflowBodySchema.parse(request.body ?? {});
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          throw createError(400, 'WF_VALIDATION_ERROR', err.errors.map(e => e.message).join(', '));
+        }
+        throw err;
+      }
+      const workflow = await workflowService.create(body.spec);
 
       reply.code(201).send({ workflow });
     },
@@ -225,7 +232,7 @@ export async function registerWorkflowManagementRoutes(
       const id = getWorkflowId(request.params);
       const body = updateWorkflowBodySchema.parse(request.body ?? {});
 
-      const existing = await repository.get(id);
+      const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
@@ -238,24 +245,23 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      let workflow: WorkflowRuntime = existing;
-
       // Update spec
       if (body.spec) {
-        workflow = await repository.update(id, body.spec);
+        await workflowService.update(id, body.spec);
       }
 
       // Update status
       if (body.status) {
         if (body.status === 'paused') {
-          workflow = await repository.pause(id);
+          await workflowService.pause(id);
         } else if (body.status === 'active') {
-          workflow = await repository.resume(id);
+          await workflowService.resume(id);
         } else if (body.status === 'disabled') {
-          workflow = await repository.disable(id);
+          await workflowService.disable(id);
         }
       }
 
+      const workflow = await workflowService.get(id);
       reply.send({ workflow });
     },
   });
@@ -273,7 +279,7 @@ export async function registerWorkflowManagementRoutes(
     handler: async (request, reply) => {
       const id = getWorkflowId(request.params);
 
-      const existing = await repository.get(id);
+      const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
@@ -286,7 +292,7 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      await repository.delete(id);
+      await workflowService.delete(id);
 
       reply.code(204).send();
     },
@@ -309,9 +315,17 @@ export async function registerWorkflowManagementRoutes(
     },
     handler: async (request, reply) => {
       const id = getWorkflowId(request.params);
-      const scheduleConfig = scheduleConfigSchema.parse(request.body ?? {});
+      let scheduleConfig: z.infer<typeof scheduleConfigSchema>;
+      try {
+        scheduleConfig = scheduleConfigSchema.parse(request.body ?? {});
+      } catch (err) {
+        if (err instanceof z.ZodError) {
+          throw createError(400, 'WF_VALIDATION_ERROR', err.errors.map(e => e.message).join(', '));
+        }
+        throw err;
+      }
 
-      const existing = await repository.get(id);
+      const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
@@ -324,8 +338,12 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      const workflow = await repository.update(id, {
-        schedule: scheduleConfig,
+      const workflow = await workflowService.update(id, {
+        on: {
+          schedule: scheduleConfig.enabled
+            ? { cron: scheduleConfig.cron, timezone: scheduleConfig.timezone }
+            : undefined,
+        },
       });
 
       reply.send({ workflow });
@@ -345,7 +363,7 @@ export async function registerWorkflowManagementRoutes(
     handler: async (request, reply) => {
       const id = getWorkflowId(request.params);
 
-      const existing = await repository.get(id);
+      const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
@@ -358,8 +376,8 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      const workflow = await repository.update(id, {
-        schedule: { enabled: false },
+      const workflow = await workflowService.update(id, {
+        on: { schedule: undefined },
       });
 
       reply.send({ workflow });
@@ -379,7 +397,7 @@ export async function registerWorkflowManagementRoutes(
     handler: async (request, reply) => {
       const id = getWorkflowId(request.params);
 
-      const existing = await repository.get(id);
+      const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
@@ -392,7 +410,8 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      const workflow = await repository.pause(id);
+      await workflowService.pause(id);
+      const workflow = await workflowService.get(id);
 
       reply.send({ workflow });
     },
@@ -411,7 +430,7 @@ export async function registerWorkflowManagementRoutes(
     handler: async (request, reply) => {
       const id = getWorkflowId(request.params);
 
-      const existing = await repository.get(id);
+      const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
@@ -424,7 +443,8 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      const workflow = await repository.resume(id);
+      await workflowService.resume(id);
+      const workflow = await workflowService.get(id);
 
       reply.send({ workflow });
     },
@@ -466,7 +486,7 @@ export async function registerWorkflowManagementRoutes(
       response: responseSchemas,
     },
     handler: async (request, reply) => {
-      const body = createWorkflowBodySchema.parse(request.body ?? {});
+      const body = z.object({ spec: z.any() }).parse(request.body ?? {});
       const result = await workflowService.validate(body.spec);
 
       reply.send(result);

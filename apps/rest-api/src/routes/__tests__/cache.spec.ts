@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
 import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerCacheRoutes } from '../cache';
@@ -22,6 +21,7 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
   return {
     schema: 'kb.registry/1',
     rev,
+    version: '1.0.0',
     generatedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     ttlMs: 60_000,
@@ -29,12 +29,14 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
     stale: false,
     source: { cliVersion: 'test', cwd: process.cwd() },
     corrupted: false,
+    plugins: [],
     manifests: [],
+    ts: Date.now(),
   };
 }
 
 describe('registerCacheRoutes', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
   let mockCliApi: CliAPI;
 
   beforeEach(async () => {
@@ -59,8 +61,8 @@ describe('registerCacheRoutes', () => {
       const beforeSnapshot = createMockSnapshot(1);
       const afterSnapshot = createMockSnapshot(2);
       const plugins = [
-        { id: '@kb-labs/plugin-1', name: 'Plugin 1' },
-        { id: '@kb-labs/plugin-2', name: 'Plugin 2' },
+        { id: '@kb-labs/plugin-1', version: '1.0.0', kind: 'v3' as const, source: { kind: 'workspace' as const, path: '/plugins/plugin-1' } },
+        { id: '@kb-labs/plugin-2', version: '1.0.0', kind: 'v3' as const, source: { kind: 'workspace' as const, path: '/plugins/plugin-2' } },
       ];
 
       vi.mocked(mockCliApi.snapshot)
@@ -117,7 +119,9 @@ describe('registerCacheRoutes', () => {
       const snapshot = createMockSnapshot(1);
       const plugins = Array.from({ length: 15 }, (_, i) => ({
         id: `@kb-labs/plugin-${i}`,
-        name: `Plugin ${i}`,
+        version: '1.0.0',
+        kind: 'v3' as const,
+        source: { kind: 'workspace' as const, path: `/plugins/plugin-${i}` },
       }));
 
       vi.mocked(mockCliApi.snapshot).mockReturnValue(snapshot);

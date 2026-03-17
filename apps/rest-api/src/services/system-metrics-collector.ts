@@ -175,9 +175,7 @@ export class SystemMetricsCollector {
         uptime: Math.floor(metrics.uptime) + 's',
       });
     } catch (error) {
-      platform.logger.error('Failed to collect system metrics', {
-        error: error instanceof Error ? error.message : String(error),
-      });
+      platform.logger.error('Failed to collect system metrics', error instanceof Error ? error : new Error(String(error)));
     }
   }
 

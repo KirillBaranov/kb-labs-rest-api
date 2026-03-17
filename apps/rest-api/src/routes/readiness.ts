@@ -59,7 +59,8 @@ export function resolveReadinessReason(readiness: ReadinessState):
   | 'registry_not_loaded'
   | 'registry_partial'
   | 'registry_snapshot_stale'
-  | 'redis_unavailable' {
+  | 'redis_unavailable'
+  | 'plugin_mount_in_progress' {
   if (!readiness.cliApiInitialized) {
     return 'cli_api_not_initialized';
   }
@@ -74,6 +75,9 @@ export function resolveReadinessReason(readiness: ReadinessState):
   }
   if (readiness.redisEnabled && !readiness.redisConnected) {
     return 'redis_unavailable';
+  }
+  if (readiness.pluginMountInProgress) {
+    return 'plugin_mount_in_progress';
   }
   return 'ready';
 }

@@ -39,28 +39,28 @@ function createPinoCompatibleLogger(logger: ILogger): any {
     // Pino log levels
     trace: (msg: string | object, ...args: any[]) => {
       if (typeof msg === 'object') {
-        logger.debug(JSON.stringify(msg), msg);
+        logger.debug(JSON.stringify(msg), msg as Record<string, unknown>);
       } else {
         logger.debug(msg, ...args);
       }
     },
     debug: (msg: string | object, ...args: any[]) => {
       if (typeof msg === 'object') {
-        logger.debug(JSON.stringify(msg), msg);
+        logger.debug(JSON.stringify(msg), msg as Record<string, unknown>);
       } else {
         logger.debug(msg, ...args);
       }
     },
     info: (msg: string | object, ...args: any[]) => {
       if (typeof msg === 'object') {
-        logger.info(JSON.stringify(msg), msg);
+        logger.info(JSON.stringify(msg), msg as Record<string, unknown>);
       } else {
         logger.info(msg, ...args);
       }
     },
     warn: (msg: string | object, ...args: any[]) => {
       if (typeof msg === 'object') {
-        logger.warn(JSON.stringify(msg), msg);
+        logger.warn(JSON.stringify(msg), msg as Record<string, unknown>);
       } else {
         logger.warn(msg, ...args);
       }
@@ -136,16 +136,25 @@ export async function createServer(
   });
 
   // Fastify 5 is too strict with logger validation, so disable it and use hooks
-  const server = Fastify({
-    logger: false, // Disable Fastify's logger validation
-    requestIdHeader: 'X-Request-Id',
-    requestIdLogLabel: 'requestId',
-    disableRequestLogging: true,
-    requestTimeout: config.timeouts?.requestTimeout || 30000,
-    bodyLimit: config.timeouts?.bodyLimit || 10485760, // 10MB
-    http2: useHttp2 && httpsOptions ? true : false,
-    https: httpsOptions,
-  });
+  const server = useHttp2 && httpsOptions
+    ? Fastify({
+        logger: false,
+        requestIdHeader: 'X-Request-Id',
+        requestIdLogLabel: 'requestId',
+        disableRequestLogging: true,
+        requestTimeout: config.timeouts?.requestTimeout || 30000,
+        bodyLimit: config.timeouts?.bodyLimit || 10485760,
+        http2: true,
+        https: httpsOptions,
+      })
+    : Fastify({
+        logger: false,
+        requestIdHeader: 'X-Request-Id',
+        requestIdLogLabel: 'requestId',
+        disableRequestLogging: true,
+        requestTimeout: config.timeouts?.requestTimeout || 30000,
+        bodyLimit: config.timeouts?.bodyLimit || 10485760,
+      });
 
   // Add our own logger to server instance
   (server as any).log = restLogger;

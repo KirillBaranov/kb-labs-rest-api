@@ -21,10 +21,8 @@ export async function registerOpenAPIRoutes(
   fastify.get('/openapi.json', {
     schema: {
       response: {
-        200: {
-          type: 'object',
-          additionalProperties: true,
-        },
+        200: { type: 'object', additionalProperties: true },
+        500: { type: 'object', additionalProperties: true },
       },
     },
     config: {

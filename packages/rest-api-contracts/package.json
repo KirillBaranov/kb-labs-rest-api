@@ -26,11 +26,11 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@kb-labs/studio-contracts": "link:../../../kb-labs-studio/packages/studio-contracts",
+    "@kb-labs/studio-contracts": "workspace:*",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@kb-labs/devkit": "^1.0.0",
+    "@kb-labs/devkit": "workspace:*",
     "@types/node": "^24.3.3",
     "rimraf": "^6.0.1",
     "tsup": "^8.5.0",

@@ -5,13 +5,12 @@
 
 import { loadRestApiConfig } from '@kb-labs/rest-api-core';
 import { createServer } from './server';
-import { findRepoRoot } from '@kb-labs/core-sys';
+import { findRepoRoot, discoverSubRepoPaths } from '@kb-labs/core-sys';
 import { createCliAPI, type CliAPI } from '@kb-labs/cli-api';
-import { initializePlatform } from './platform';
-import { platform } from '@kb-labs/core-runtime';
+import { platform, createServiceBootstrap, loadEnvFromRoot } from '@kb-labs/core-runtime';
 import { SystemMetricsCollector } from './services/system-metrics-collector';
 import * as path from 'node:path';
-import { promises as fs, readFileSync, existsSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 // Singleton CLI API instance for cleanup
@@ -107,69 +106,21 @@ async function findMonorepoRoot(startDir: string): Promise<string> {
 }
 
 /**
- * Load environment variables from .env file
- * Does not overwrite existing variables
- */
-function loadEnvFile(cwd: string): void {
-  const envPath = path.join(cwd, '.env');
-
-  if (!existsSync(envPath)) {
-    return;
-  }
-
-  try {
-    const content = readFileSync(envPath, 'utf-8');
-    const lines = content.split('\n');
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-
-      // Skip comments and empty lines
-      if (!trimmed || trimmed.startsWith('#')) {
-        continue;
-      }
-
-      // Parse KEY=VALUE
-      const equalIndex = trimmed.indexOf('=');
-      if (equalIndex === -1) {
-        continue;
-      }
-
-      const key = trimmed.substring(0, equalIndex).trim();
-      const value = trimmed.substring(equalIndex + 1).trim();
-
-      // Remove quotes if present
-      const unquotedValue = value
-        .replace(/^["'](.*)["']$/, '$1')
-        .replace(/^`(.*)`$/, '$1');
-
-      // Set only if variable is not already set
-      if (key && !(key in process.env)) {
-        process.env[key] = unquotedValue;
-      }
-    }
-  } catch (error) {
-    // Silently ignore .env loading errors
-    // Not critical for server operation
-  }
-}
-
-/**
  * Bootstrap REST API server
  */
 export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
-  // Load .env file if present (does not overwrite existing variables)
-  loadEnvFile(cwd);
-
-  // Load configuration first (before platform init, to avoid circular dependency)
-  const { config, diagnostics } = await loadRestApiConfig(cwd);
-
-  // Detect repo root (prefer monorepo root with kb-* patterns)
+  // Detect repo root first so we can load .env before any config reads
   const repoRoot = await findMonorepoRoot(cwd);
 
-  // Initialize platform adapters from kb.config.json
-  // This will initialize logger based on kb.config.json configuration
-  await initializePlatform(repoRoot);
+  // Load .env early — must happen before loadRestApiConfig() so that
+  // KB_REST_* env overrides (port, redis, etc.) are available to the config mapper
+  loadEnvFromRoot(repoRoot);
+
+  // Load configuration (envMapper now sees fully-populated process.env)
+  const { config, diagnostics } = await loadRestApiConfig(cwd);
+
+  // Initialize platform (adapters from kb.config.json; .env already loaded above)
+  await createServiceBootstrap({ appId: 'rest-api', repoRoot });
 
   // Now we can use platform.logger (configured from kb.config.json)
   const startupRequestId = `rest-startup-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
@@ -203,26 +154,13 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   bootstrapLogger.info('Initializing CLI API');
   const redisConfig = config.redis;
   
-  // Collect all kb-labs-* directories as roots for discovery
-  // CLI API will scan these roots using workspace strategy
-  const discoveryRoots = [repoRoot];
-  try {
-    const entries = await fs.readdir(repoRoot, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && entry.name.startsWith('kb-labs-')) {
-        const repoPath = path.join(repoRoot, entry.name);
-        discoveryRoots.push(repoPath);
-      }
-    }
-    bootstrapLogger.info('Discovery roots configured', { 
-      roots: discoveryRoots,
-      rootsCount: discoveryRoots.length,
-    });
-  } catch (error) {
-    bootstrapLogger.warn('Failed to collect discovery roots', { 
-      error: error instanceof Error ? error.message : String(error),
-    });
-  }
+  // Collect all sub-repo paths for plugin discovery.
+  // Uses .gitmodules for accurate nested layout — no hardcoded category dirs.
+  const discoveryRoots = [repoRoot, ...discoverSubRepoPaths(repoRoot)];
+  bootstrapLogger.info('Discovery roots configured', {
+    roots: discoveryRoots,
+    rootsCount: discoveryRoots.length,
+  });
   
   // Registry snapshot TTL based on environment
   // Development: 10 minutes (frequent changes, but not too aggressive)

@@ -4,7 +4,7 @@ import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
 import type { EventHub, BroadcastEvent } from '../events/hub';
-import { metricsCollector } from '../middleware/metrics';
+import { metricsCollector } from '../middleware/metrics.js';
 import { buildRegistrySseAuthHook } from '../utils/sse-auth';
 
 export async function registerEventRoutes(
@@ -61,7 +61,7 @@ export async function registerEventRoutes(
         previousChecksum: snapshot.previousChecksum ?? null,
       });
 
-      void cliApi
+      const healthPromise = cliApi
         .getSystemHealth()
         .then((health: SystemHealthSnapshot) => {
           const ready = isReady(readiness);
@@ -94,13 +94,22 @@ export async function registerEventRoutes(
           }
         });
 
-      request.raw.on('close', () => {
-        unsubscribe();
-        reply.raw.end();
+      await new Promise<void>((resolve) => {
+        request.raw.on('close', () => {
+          unsubscribe();
+          reply.raw.end();
+          resolve();
+        });
+        // In inject/test mode, the socket is not a real TCP socket and 'close' may not fire.
+        // Wait for health fetch to complete before resolving so health event is included in response.
+        if (request.raw.socket && !(request.raw.socket as any).writable) {
+          void healthPromise.then(() => {
+            unsubscribe();
+            reply.raw.end();
+            resolve();
+          });
+        }
       });
-
-      // Keep connection alive indefinitely
-      await new Promise<void>(() => {});
     },
   });
 }

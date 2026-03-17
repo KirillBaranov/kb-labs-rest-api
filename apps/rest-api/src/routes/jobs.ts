@@ -215,9 +215,9 @@ export async function registerJobsRoutes(
         throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
       }
 
-      const stats = cronManager.getStats();
+      const jobs = cronManager.list();
 
-      return reply.send({ stats });
+      return reply.send({ stats: { total: jobs.length, jobs } });
     },
   });
 }

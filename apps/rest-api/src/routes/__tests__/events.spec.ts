@@ -1,6 +1,5 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { FastifyInstance } from 'fastify';
 import type { CliAPI, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/cli-api';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { EventHub, BroadcastEvent } from '../../events/hub';
@@ -38,6 +37,7 @@ function createMockSnapshot(): RegistrySnapshot {
   return {
     schema: 'kb.registry/1',
     rev: 42,
+    version: '1.0.0',
     generatedAt: new Date().toISOString(),
     expiresAt: new Date(Date.now() + 60_000).toISOString(),
     ttlMs: 60_000,
@@ -45,7 +45,9 @@ function createMockSnapshot(): RegistrySnapshot {
     stale: false,
     source: { cliVersion: 'test', cwd: process.cwd() },
     corrupted: false,
+    plugins: [],
     manifests: [],
+    ts: Date.now(),
     checksum: 'abc123',
     checksumAlgorithm: 'sha256',
     previousChecksum: 'def456',
@@ -101,7 +103,7 @@ function createMockReadinessState(): ReadinessState {
 }
 
 describe('registerEventRoutes', () => {
-  let app: FastifyInstance;
+  let app: ReturnType<typeof Fastify>;
   let mockCliApi: CliAPI;
   let mockEventHub: EventHub;
   let readiness: ReadinessState;
@@ -134,10 +136,10 @@ describe('registerEventRoutes', () => {
           if (index > -1) {subscribers.splice(index, 1);}
         };
       }),
-      broadcast: vi.fn((event: BroadcastEvent) => {
+      publish: vi.fn((event: BroadcastEvent) => {
         subscribers.forEach((sub) => sub(event));
       }),
-    };
+    } as any;
 
     readiness = createMockReadinessState();
 
@@ -219,7 +221,7 @@ describe('registerEventRoutes', () => {
     });
 
     it('includes Redis status in health event when Redis is enabled', async () => {
-      vi.mocked(mockCliApi.getRedisStatus).mockReturnValue({
+      vi.mocked(mockCliApi.getRedisStatus!).mockReturnValue({
         enabled: true,
         healthy: true,
         roles: {
