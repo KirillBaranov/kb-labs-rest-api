@@ -205,7 +205,7 @@ export async function registerAdapterCallRoutes(
       const latencyMs = Date.now() - startMs;
       const message = err instanceof Error ? err.message : String(err);
 
-      logger.error('Adapter call failed', { requestId, adapter, method, hostId: context.hostId, latencyMs, error: message });
+      logger.error('Adapter call failed', err instanceof Error ? err : undefined, { requestId, adapter, method, hostId: context.hostId, latencyMs });
 
       return reply.code(500).send({
         ok: false,
