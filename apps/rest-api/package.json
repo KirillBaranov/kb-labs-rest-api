@@ -25,6 +25,7 @@
     "@kb-labs/core-config": "workspace:*",
     "@kb-labs/core-platform": "workspace:*",
     "@kb-labs/core-runtime": "workspace:*",
+    "@kb-labs/gateway-contracts": "workspace:*",
     "@kb-labs/core-tenant": "workspace:*",
     "@kb-labs/core-sys": "workspace:*",
     "@kb-labs/core-workspace": "workspace:*",

@@ -22,6 +22,7 @@ import { registerAnalyticsRoutes } from './analytics';
 import { registerAdaptersRoutes } from './adapters';
 import { registerLogRoutes } from './logs';
 import { registerPlatformRoutes } from './platform';
+import { registerAdapterCallRoutes } from './adapter-call';
 import { registerDebugRoutes, registerRouteCollector } from './debug-routes';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
@@ -379,6 +380,8 @@ export async function registerRoutes(
   await registerLogRoutes(server, config, eventHub);
 
   await registerPlatformRoutes(server, config, repoRoot);
+
+  await registerAdapterCallRoutes(server);
 
   await registerDebugRoutes(server, config);
 
