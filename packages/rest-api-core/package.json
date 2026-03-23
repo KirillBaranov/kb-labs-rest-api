@@ -29,14 +29,14 @@
   },
   "dependencies": {
     "zod": "^3.23.8",
-    "@kb-labs/core-bundle": "workspace:*",
-    "@kb-labs/core-config": "workspace:*",
-    "@kb-labs/plugin-contracts": "workspace:*",
+    "@kb-labs/core-bundle": "link:../../../kb-labs-core/packages/core-bundle",
+    "@kb-labs/core-config": "link:../../../kb-labs-core/packages/core-config",
+    "@kb-labs/plugin-contracts": "link:../../../../infra/kb-labs-plugin/packages/plugin-contracts",
     "@kb-labs/rest-api-contracts": "workspace:*"
   },
   "devDependencies": {
     "vitest": "^3.2.4",
-    "@kb-labs/devkit": "workspace:*",
+    "@kb-labs/devkit": "link:../../../../infra/kb-labs-devkit",
     "tsup": "^8.5.0",
     "@types/node": "^24.3.3",
     "rimraf": "^6.0.1",
