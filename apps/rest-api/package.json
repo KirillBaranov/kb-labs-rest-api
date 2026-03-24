@@ -1,7 +1,6 @@
 {
   "name": "@kb-labs/rest-api-app",
   "version": "0.1.0",
-  "private": true,
   "description": "REST API application for KB Labs, providing HTTP endpoints for plugin functionality",
   "type": "module",
   "main": "./dist/index.js",
