@@ -4,19 +4,20 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ICronManager } from '@kb-labs/core-platform';
 import { z } from 'zod';
+import {
+  ListJobsQuerySchema,
+  JobsListResponseSchema,
+  JobResponseSchema,
+  JobStatsResponseSchema,
+  JobActionResponseSchema,
+  ErrorResponseSchema,
+} from '@kb-labs/rest-api-contracts';
 import { normalizeBasePath } from '../utils/path-helpers';
-import { responseSchemas } from '../utils/schema';
-
-// ============================================================================
-// Schemas
-// ============================================================================
-
-const listJobsQuerySchema = z.object({
-  status: z.enum(['active', 'paused']).optional(),
-});
 
 // ============================================================================
 // Helper Functions
@@ -48,27 +49,37 @@ export async function registerJobsRoutes(
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath);
 
+  // Encapsulate Zod compilers so they don't leak to other scopes (plugin routes use plain JSON schemas)
+  await server.register(async (scope) => {
+    scope.setValidatorCompiler(validatorCompiler);
+    scope.setSerializerCompiler(serializerCompiler);
+    const s = scope.withTypeProvider<ZodTypeProvider>();
+
   /**
    * GET /api/v1/jobs
    * List all scheduled jobs
    */
-  server.route({
+  s.route({
     method: 'GET',
     url: `${basePath}/jobs`,
     schema: {
-      response: responseSchemas,
+      tags: ['Jobs'],
+      summary: 'List scheduled jobs',
+      querystring: ListJobsQuerySchema,
+      response: {
+        200: JobsListResponseSchema,
+        503: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
       if (!cronManager) {
         throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
       }
 
-      const query = listJobsQuerySchema.parse(request.query ?? {});
       let jobs = cronManager.list();
 
-      // Filter by status
-      if (query.status) {
-        jobs = jobs.filter((job) => job.status === query.status);
+      if (request.query.status) {
+        jobs = jobs.filter((job) => job.status === request.query.status);
       }
 
       return reply.send({ jobs });
@@ -76,21 +87,53 @@ export async function registerJobsRoutes(
   });
 
   /**
-   * GET /api/v1/jobs/:id
-   * Get job details
+   * GET /api/v1/jobs/stats
+   * Get cron jobs statistics (must be before /:id to avoid route conflict)
    */
-  server.route({
+  s.route({
     method: 'GET',
-    url: `${basePath}/jobs/:id`,
+    url: `${basePath}/jobs/stats`,
     schema: {
-      response: responseSchemas,
+      tags: ['Jobs'],
+      summary: 'Get cron jobs statistics',
+      response: {
+        200: JobStatsResponseSchema,
+        503: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
       if (!cronManager) {
         throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
       }
 
-      const jobId = getJobId(request.params);
+      const jobs = cronManager.list();
+      return reply.send({ stats: { total: jobs.length, jobs } });
+    },
+  });
+
+  /**
+   * GET /api/v1/jobs/:id
+   * Get job details
+   */
+  s.route({
+    method: 'GET',
+    url: `${basePath}/jobs/:id`,
+    schema: {
+      tags: ['Jobs'],
+      summary: 'Get job details',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: JobResponseSchema,
+        404: ErrorResponseSchema,
+        503: ErrorResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      if (!cronManager) {
+        throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
+      }
+
+      const jobId = request.params.id;
       const jobs = cronManager.list();
       const job = jobs.find((j) => j.id === jobId);
 
@@ -106,25 +149,29 @@ export async function registerJobsRoutes(
    * POST /api/v1/jobs/:id/trigger
    * Trigger job execution immediately
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/jobs/:id/trigger`,
     schema: {
-      response: responseSchemas,
+      tags: ['Jobs'],
+      summary: 'Trigger job execution immediately',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: JobActionResponseSchema,
+        404: ErrorResponseSchema,
+        503: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
       if (!cronManager) {
         throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
       }
 
-      const jobId = getJobId(request.params);
+      const jobId = request.params.id;
 
       try {
         await cronManager.trigger(jobId);
-        return reply.send({
-          success: true,
-          message: `Job ${jobId} triggered successfully`,
-        });
+        return reply.send({ success: true as const, message: `Job ${jobId} triggered successfully` });
       } catch (error) {
         if (error instanceof Error && error.message.includes('not found')) {
           throw createError(404, 'JOB_NOT_FOUND', `Job ${jobId} not found`);
@@ -138,20 +185,25 @@ export async function registerJobsRoutes(
    * POST /api/v1/jobs/:id/pause
    * Pause job execution
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/jobs/:id/pause`,
     schema: {
-      response: responseSchemas,
+      tags: ['Jobs'],
+      summary: 'Pause job execution',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: JobActionResponseSchema,
+        404: ErrorResponseSchema,
+        503: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
       if (!cronManager) {
         throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
       }
 
-      const jobId = getJobId(request.params);
-
-      // Check if job exists
+      const jobId = request.params.id;
       const jobs = cronManager.list();
       const job = jobs.find((j) => j.id === jobId);
       if (!job) {
@@ -159,11 +211,7 @@ export async function registerJobsRoutes(
       }
 
       cronManager.pause(jobId);
-
-      return reply.send({
-        success: true,
-        message: `Job ${jobId} paused successfully`,
-      });
+      return reply.send({ success: true as const, message: `Job ${jobId} paused successfully` });
     },
   });
 
@@ -171,20 +219,25 @@ export async function registerJobsRoutes(
    * POST /api/v1/jobs/:id/resume
    * Resume paused job
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/jobs/:id/resume`,
     schema: {
-      response: responseSchemas,
+      tags: ['Jobs'],
+      summary: 'Resume paused job',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: JobActionResponseSchema,
+        404: ErrorResponseSchema,
+        503: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
       if (!cronManager) {
         throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
       }
 
-      const jobId = getJobId(request.params);
-
-      // Check if job exists
+      const jobId = request.params.id;
       const jobs = cronManager.list();
       const job = jobs.find((j) => j.id === jobId);
       if (!job) {
@@ -192,32 +245,9 @@ export async function registerJobsRoutes(
       }
 
       cronManager.resume(jobId);
-
-      return reply.send({
-        success: true,
-        message: `Job ${jobId} resumed successfully`,
-      });
+      return reply.send({ success: true as const, message: `Job ${jobId} resumed successfully` });
     },
   });
 
-  /**
-   * GET /api/v1/jobs/stats
-   * Get cron jobs statistics
-   */
-  server.route({
-    method: 'GET',
-    url: `${basePath}/jobs/stats`,
-    schema: {
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      if (!cronManager) {
-        throw createError(503, 'CRON_UNAVAILABLE', 'Cron manager not available');
-      }
-
-      const jobs = cronManager.list();
-
-      return reply.send({ stats: { total: jobs.length, jobs } });
-    },
-  });
+  }); // end encapsulated scope
 }

@@ -18,7 +18,11 @@
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@fastify/rate-limit": "^10.1.1",
+    "@fastify/swagger": ">=9.5.1",
+    "@fastify/swagger-ui": "^5.2.0",
     "@fastify/websocket": "^11.0.1",
+    "@kb-labs/shared-http": "link:../../../kb-labs-shared/packages/shared-http",
+    "fastify-type-provider-zod": "^6.0.0",
     "@kb-labs/cli-api": "link:../../../kb-labs-cli/packages/cli-api",
     "@kb-labs/cli-core": "link:../../../kb-labs-cli/packages/cli-core",
     "@kb-labs/core-config": "link:../../../kb-labs-core/packages/core-config",
@@ -45,7 +49,7 @@
     "ulid": "^2.3.0",
     "ws": "^8.18.0",
     "yaml": "^2.8.0",
-    "zod": "^3.22.4"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@kb-labs/devkit": "link:../../../../infra/kb-labs-devkit",

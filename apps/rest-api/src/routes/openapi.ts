@@ -17,13 +17,12 @@ export async function registerOpenAPIRoutes(
   repoRoot: string,
   cliApi: CliAPI
 ) {
-  // Merged OpenAPI spec from all plugins
-  fastify.get('/openapi.json', {
+  // Plugin-manifest-merged OpenAPI spec (renamed from /openapi.json).
+  // /openapi.json is now owned by @fastify/swagger (Fastify-native routes).
+  // This endpoint aggregates specs from plugin manifests only.
+  fastify.get('/openapi-plugins.json', {
     schema: {
-      response: {
-        200: { type: 'object', additionalProperties: true },
-        500: { type: 'object', additionalProperties: true },
-      },
+      hide: true,
     },
     config: {
       rateLimit: {

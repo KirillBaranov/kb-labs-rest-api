@@ -4,53 +4,30 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import type { ZodTypeProvider } from 'fastify-type-provider-zod';
+import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { CliAPI } from '@kb-labs/cli-api';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { IWorkflowEngine, ICronManager } from '@kb-labs/core-platform';
-import { WorkflowSpecSchema } from '@kb-labs/workflow-contracts';
 import {
   WorkflowService,
   WorkflowScheduleManager,
   type WorkflowExecutor,
 } from '@kb-labs/workflow-engine';
 import { z } from 'zod';
+import {
+  ListWorkflowsQuerySchema,
+  WorkflowsListResponseSchema,
+  WorkflowResponseSchema,
+  CreateWorkflowBodySchema,
+  UpdateWorkflowBodySchema,
+  ScheduleConfigBodySchema,
+  ValidateWorkflowBodySchema,
+  HandlersListResponseSchema,
+  ErrorResponseSchema,
+} from '@kb-labs/rest-api-contracts';
 import { normalizeBasePath } from '../utils/path-helpers';
-import { objectSchema, responseSchemas } from '../utils/schema';
-
-// ============================================================================
-// Schemas
-// ============================================================================
-
-const listWorkflowsQuerySchema = z.object({
-  source: z.enum(['manifest', 'standalone']).optional(),
-  status: z.enum(['active', 'paused', 'disabled']).optional(),
-  tags: z.string().optional(), // comma-separated
-  search: z.string().optional(),
-});
-
-const createWorkflowBodySchema = z.object({
-  spec: WorkflowSpecSchema,
-});
-
-const updateWorkflowBodySchema = z.object({
-  spec: z.object({
-    name: z.string().min(1).optional(),
-    version: z.string().min(1).optional(),
-    description: z.string().optional(),
-    on: z.any().optional(),
-    env: z.record(z.string(), z.string()).optional(),
-    secrets: z.array(z.string().min(1)).optional(),
-    jobs: z.record(z.string().min(1), z.any()).optional(),
-  }).optional(),
-  status: z.enum(['active', 'paused', 'disabled']).optional(),
-});
-
-const scheduleConfigSchema = z.object({
-  cron: z.string().min(1),
-  enabled: z.boolean(),
-  timezone: z.string().optional(),
-});
 
 // ============================================================================
 // Helper Functions
@@ -84,6 +61,12 @@ export async function registerWorkflowManagementRoutes(
   cronManager: ICronManager | null,
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath);
+
+  // Encapsulate Zod compilers so they don't leak to plugin routes (plain JSON schemas)
+  await server.register(async (scope) => {
+    scope.setValidatorCompiler(validatorCompiler);
+    scope.setSerializerCompiler(serializerCompiler);
+    const s = scope.withTypeProvider<ZodTypeProvider>();
 
   // Initialize services
   const workflowService = new WorkflowService({
@@ -130,41 +113,83 @@ export async function registerWorkflowManagementRoutes(
    * GET /api/v1/workflows
    * List all workflows (manifest + standalone)
    */
-  server.route({
+  s.route({
     method: 'GET',
     url: `${basePath}/workflows`,
     schema: {
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'List all workflows',
+      querystring: ListWorkflowsQuerySchema,
+      response: {
+        200: WorkflowsListResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const query = listWorkflowsQuerySchema.parse(request.query ?? {});
+      const query = request.query;
 
       const workflows = await workflowService.listAll({
         source: query.source,
         status: query.status,
       });
 
-      // Apply additional filters
       let filtered = workflows;
 
       if (query.tags) {
         const tags = query.tags.split(',').map((t) => t.trim());
-        filtered = filtered.filter((w) => w.tags?.some((tag) => tags.includes(tag)));
+        filtered = filtered.filter((w) => (w as any).tags?.some((tag: string) => tags.includes(tag)));
       }
 
       if (query.search) {
         const search = query.search.toLowerCase();
         filtered = filtered.filter(
           (w) =>
-            w.name.toLowerCase().includes(search) ||
-            w.description?.toLowerCase().includes(search)
+            (w as any).name?.toLowerCase().includes(search) ||
+            (w as any).description?.toLowerCase().includes(search)
         );
       }
 
-      reply.send({
-        workflows: filtered,
-        total: filtered.length,
-      });
+      reply.send({ workflows: filtered, total: filtered.length });
+    },
+  });
+
+  /**
+   * GET /api/v1/workflows/handlers
+   * List available workflow handlers (must be before /:id to avoid route conflict)
+   */
+  s.route({
+    method: 'GET',
+    url: `${basePath}/workflows/handlers`,
+    schema: {
+      tags: ['Workflows'],
+      summary: 'List available workflow handlers',
+      response: {
+        200: HandlersListResponseSchema,
+      },
+    },
+    handler: async (request, reply) => {
+      const handlers = await workflowService.getAvailableHandlers();
+      reply.send({ handlers, total: handlers.length });
+    },
+  });
+
+  /**
+   * POST /api/v1/workflows/validate
+   * Validate workflow spec (must be before /:id to avoid route conflict)
+   */
+  s.route({
+    method: 'POST',
+    url: `${basePath}/workflows/validate`,
+    schema: {
+      tags: ['Workflows'],
+      summary: 'Validate workflow spec',
+      body: ValidateWorkflowBodySchema,
+      response: {
+        200: z.record(z.unknown()),
+      },
+    },
+    handler: async (request, reply) => {
+      const result = await workflowService.validate(request.body.spec);
+      reply.send(result);
     },
   });
 
@@ -172,18 +197,23 @@ export async function registerWorkflowManagementRoutes(
    * GET /api/v1/workflows/:id
    * Get workflow by ID
    */
-  server.route({
+  s.route({
     method: 'GET',
     url: `${basePath}/workflows/:id`,
     schema: {
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Get workflow by ID',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: WorkflowResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
-      const workflow = await workflowService.get(id);
+      const workflow = await workflowService.get(request.params.id);
 
       if (!workflow) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        throw createError(404, 'WF_NOT_FOUND', `Workflow ${request.params.id} not found`);
       }
 
       reply.send({ workflow });
@@ -194,25 +224,20 @@ export async function registerWorkflowManagementRoutes(
    * POST /api/v1/workflows
    * Create new standalone workflow
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/workflows`,
     schema: {
-      body: objectSchema,
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Create standalone workflow',
+      body: CreateWorkflowBodySchema,
+      response: {
+        201: WorkflowResponseSchema,
+        400: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      let body: z.infer<typeof createWorkflowBodySchema>;
-      try {
-        body = createWorkflowBodySchema.parse(request.body ?? {});
-      } catch (err) {
-        if (err instanceof z.ZodError) {
-          throw createError(400, 'WF_VALIDATION_ERROR', err.errors.map(e => e.message).join(', '));
-        }
-        throw err;
-      }
-      const workflow = await workflowService.create(body.spec);
-
+      const workflow = await workflowService.create(request.body.spec);
       reply.code(201).send({ workflow });
     },
   });
@@ -221,42 +246,42 @@ export async function registerWorkflowManagementRoutes(
    * PUT /api/v1/workflows/:id
    * Update standalone workflow
    */
-  server.route({
+  s.route({
     method: 'PUT',
     url: `${basePath}/workflows/:id`,
     schema: {
-      body: objectSchema,
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Update standalone workflow',
+      params: z.object({ id: z.string() }),
+      body: UpdateWorkflowBodySchema,
+      response: {
+        200: WorkflowResponseSchema,
+        400: ErrorResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
-      const body = updateWorkflowBodySchema.parse(request.body ?? {});
+      const id = request.params.id;
 
       const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
 
-      if (existing.source !== 'standalone') {
-        throw createError(
-          400,
-          'WF_NOT_STANDALONE',
-          `Cannot update manifest-based workflow ${id}`
-        );
+      if ((existing as any).source !== 'standalone') {
+        throw createError(400, 'WF_NOT_STANDALONE', `Cannot update manifest-based workflow ${id}`);
       }
 
-      // Update spec
-      if (body.spec) {
-        await workflowService.update(id, body.spec);
+      if (request.body.spec) {
+        await workflowService.update(id, request.body.spec);
       }
 
-      // Update status
-      if (body.status) {
-        if (body.status === 'paused') {
+      if (request.body.status) {
+        if (request.body.status === 'paused') {
           await workflowService.pause(id);
-        } else if (body.status === 'active') {
+        } else if (request.body.status === 'active') {
           await workflowService.resume(id);
-        } else if (body.status === 'disabled') {
+        } else if (request.body.status === 'disabled') {
           await workflowService.disable(id);
         }
       }
@@ -270,30 +295,32 @@ export async function registerWorkflowManagementRoutes(
    * DELETE /api/v1/workflows/:id
    * Delete standalone workflow
    */
-  server.route({
+  s.route({
     method: 'DELETE',
     url: `${basePath}/workflows/:id`,
     schema: {
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Delete standalone workflow',
+      params: z.object({ id: z.string() }),
+      response: {
+        204: z.null(),
+        400: ErrorResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
+      const id = request.params.id;
 
       const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
 
-      if (existing.source !== 'standalone') {
-        throw createError(
-          400,
-          'WF_NOT_STANDALONE',
-          `Cannot delete manifest-based workflow ${id}`
-        );
+      if ((existing as any).source !== 'standalone') {
+        throw createError(400, 'WF_NOT_STANDALONE', `Cannot delete manifest-based workflow ${id}`);
       }
 
       await workflowService.delete(id);
-
       reply.code(204).send();
     },
   });
@@ -306,36 +333,31 @@ export async function registerWorkflowManagementRoutes(
    * POST /api/v1/workflows/:id/schedule
    * Enable or update workflow schedule
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/workflows/:id/schedule`,
     schema: {
-      body: objectSchema,
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Enable or update workflow schedule',
+      params: z.object({ id: z.string() }),
+      body: ScheduleConfigBodySchema,
+      response: {
+        200: WorkflowResponseSchema,
+        400: ErrorResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
-      let scheduleConfig: z.infer<typeof scheduleConfigSchema>;
-      try {
-        scheduleConfig = scheduleConfigSchema.parse(request.body ?? {});
-      } catch (err) {
-        if (err instanceof z.ZodError) {
-          throw createError(400, 'WF_VALIDATION_ERROR', err.errors.map(e => e.message).join(', '));
-        }
-        throw err;
-      }
+      const id = request.params.id;
+      const scheduleConfig = request.body;
 
       const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
 
-      if (existing.source !== 'standalone') {
-        throw createError(
-          400,
-          'WF_NOT_STANDALONE',
-          `Cannot modify schedule for manifest-based workflow ${id}`
-        );
+      if ((existing as any).source !== 'standalone') {
+        throw createError(400, 'WF_NOT_STANDALONE', `Cannot modify schedule for manifest-based workflow ${id}`);
       }
 
       const workflow = await workflowService.update(id, {
@@ -354,32 +376,32 @@ export async function registerWorkflowManagementRoutes(
    * DELETE /api/v1/workflows/:id/schedule
    * Disable workflow schedule
    */
-  server.route({
+  s.route({
     method: 'DELETE',
     url: `${basePath}/workflows/:id/schedule`,
     schema: {
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Disable workflow schedule',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: WorkflowResponseSchema,
+        400: ErrorResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
+      const id = request.params.id;
 
       const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
 
-      if (existing.source !== 'standalone') {
-        throw createError(
-          400,
-          'WF_NOT_STANDALONE',
-          `Cannot modify schedule for manifest-based workflow ${id}`
-        );
+      if ((existing as any).source !== 'standalone') {
+        throw createError(400, 'WF_NOT_STANDALONE', `Cannot modify schedule for manifest-based workflow ${id}`);
       }
 
-      const workflow = await workflowService.update(id, {
-        on: { schedule: undefined },
-      });
-
+      const workflow = await workflowService.update(id, { on: { schedule: undefined } });
       reply.send({ workflow });
     },
   });
@@ -388,31 +410,33 @@ export async function registerWorkflowManagementRoutes(
    * POST /api/v1/workflows/:id/pause
    * Pause workflow (disable schedule temporarily)
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/workflows/:id/pause`,
     schema: {
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Pause workflow (disable schedule temporarily)',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: WorkflowResponseSchema,
+        400: ErrorResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
+      const id = request.params.id;
 
       const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
 
-      if (existing.source !== 'standalone') {
-        throw createError(
-          400,
-          'WF_NOT_STANDALONE',
-          `Cannot pause manifest-based workflow ${id}`
-        );
+      if ((existing as any).source !== 'standalone') {
+        throw createError(400, 'WF_NOT_STANDALONE', `Cannot pause manifest-based workflow ${id}`);
       }
 
       await workflowService.pause(id);
       const workflow = await workflowService.get(id);
-
       reply.send({ workflow });
     },
   });
@@ -421,75 +445,36 @@ export async function registerWorkflowManagementRoutes(
    * POST /api/v1/workflows/:id/resume
    * Resume workflow (re-enable schedule)
    */
-  server.route({
+  s.route({
     method: 'POST',
     url: `${basePath}/workflows/:id/resume`,
     schema: {
-      response: responseSchemas,
+      tags: ['Workflows'],
+      summary: 'Resume workflow (re-enable schedule)',
+      params: z.object({ id: z.string() }),
+      response: {
+        200: WorkflowResponseSchema,
+        400: ErrorResponseSchema,
+        404: ErrorResponseSchema,
+      },
     },
     handler: async (request, reply) => {
-      const id = getWorkflowId(request.params);
+      const id = request.params.id;
 
       const existing = await workflowService.get(id);
       if (!existing) {
         throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
       }
 
-      if (existing.source !== 'standalone') {
-        throw createError(
-          400,
-          'WF_NOT_STANDALONE',
-          `Cannot resume manifest-based workflow ${id}`
-        );
+      if ((existing as any).source !== 'standalone') {
+        throw createError(400, 'WF_NOT_STANDALONE', `Cannot resume manifest-based workflow ${id}`);
       }
 
       await workflowService.resume(id);
       const workflow = await workflowService.get(id);
-
       reply.send({ workflow });
     },
   });
 
-  // ========================================================================
-  // Discovery
-  // ========================================================================
-
-  /**
-   * GET /api/v1/workflows/handlers
-   * List available workflow handlers (from manifests)
-   */
-  server.route({
-    method: 'GET',
-    url: `${basePath}/workflows/handlers`,
-    schema: {
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      const handlers = await workflowService.getAvailableHandlers();
-
-      reply.send({
-        handlers,
-        total: handlers.length,
-      });
-    },
-  });
-
-  /**
-   * POST /api/v1/workflows/validate
-   * Validate workflow spec
-   */
-  server.route({
-    method: 'POST',
-    url: `${basePath}/workflows/validate`,
-    schema: {
-      body: objectSchema,
-      response: responseSchemas,
-    },
-    handler: async (request, reply) => {
-      const body = z.object({ spec: z.any() }).parse(request.body ?? {});
-      const result = await workflowService.validate(body.spec);
-
-      reply.send(result);
-    },
-  });
+  }); // end encapsulated scope
 }

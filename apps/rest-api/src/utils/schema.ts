@@ -1,18 +1,12 @@
 /**
  * @module @kb-labs/rest-api-app/utils/schema
- * Schema utilities for Fastify routes
+ * Schema utilities for Fastify routes.
+ * Route-level Zod schemas live in @kb-labs/rest-api-contracts/route-schemas.
  */
 
 /**
- * Simple object schema for Fastify (Zod validation happens in handlers)
- */
-export const objectSchema = {
-  type: 'object',
-  additionalProperties: true,
-} as const;
-
-/**
- * Error response schema (includes message field for error responses)
+ * Error response schema for Fastify's built-in error serialization.
+ * Used in non-Zod routes (health, metrics, internal).
  */
 export const errorSchema = {
   type: 'object',
@@ -24,17 +18,3 @@ export const errorSchema = {
   },
   additionalProperties: true,
 } as const;
-
-/**
- * Response schemas (simplified, validation via Zod in handlers)
- */
-export const responseSchemas = {
-  200: objectSchema,
-  201: objectSchema,
-  202: objectSchema,
-  204: { type: 'null' } as const,
-  400: errorSchema,
-  404: errorSchema,
-  500: errorSchema,
-} as const;
-

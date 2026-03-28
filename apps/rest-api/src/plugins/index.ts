@@ -13,6 +13,7 @@ import type {
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import fastifyCors, { type FastifyCorsOptions } from '@fastify/cors';
 import fastifyRateLimit, { type RateLimitPluginOptions } from '@fastify/rate-limit';
+import { registerOpenAPI } from '@kb-labs/shared-http';
 
 /**
  * Register all Fastify plugins
@@ -101,5 +102,17 @@ export async function registerPlugins(
 
     await server.register(rateLimitPlugin, rateLimitOpts);
   }
+
+  // OpenAPI / Swagger UI
+  // Must be registered after other plugins and before routes.
+  // Spec is at /openapi.json — canonical across all services.
+  // UI is disabled in production (hideUntagged: true keeps internal routes invisible).
+  await registerOpenAPI(server, {
+    title: 'KB Labs REST API',
+    description: 'Main platform REST API — jobs, workflows, plugins, adapters',
+    version: '1.0.0',
+    servers: [{ url: 'http://localhost:5050', description: 'Local dev' }],
+    ui: corsProfile !== 'prod',
+  });
 }
 
