@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import {
   registerPluginRoutes,
-  registerPluginRegistry,
+  registerPluginSnapshotRoutes,
 } from '../plugins';
 import type { ReadinessState } from '../readiness';
 import * as fs from 'node:fs/promises';
@@ -184,7 +184,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -217,7 +217,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -267,7 +267,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -306,7 +306,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -350,7 +350,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -395,7 +395,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -426,7 +426,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -459,7 +459,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -495,7 +495,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -519,7 +519,7 @@ describe('registerPluginRoutes', () => {
       snapshot: vi.fn(() => {
         throw new Error('Registry unavailable');
       }),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -549,7 +549,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     // No readiness object passed
     await expect(
@@ -588,7 +588,7 @@ describe('registerPluginRoutes', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerPluginRoutes(
       app,
@@ -614,7 +614,7 @@ describe('registerPluginRoutes', () => {
   });
 });
 
-describe('registerPluginRegistry', () => {
+describe('registerPluginSnapshotRoutes', () => {
   let app: ReturnType<typeof Fastify>;
 
   beforeEach(async () => {
@@ -644,9 +644,9 @@ describe('registerPluginRegistry', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
-    await registerPluginRegistry(app, BASE_CONFIG, cliApi);
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
     const response = await app.inject({
       method: 'GET',
@@ -671,9 +671,9 @@ describe('registerPluginRegistry', () => {
       snapshot: vi.fn(() => {
         throw new Error('Registry service unavailable');
       }),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
-    await registerPluginRegistry(app, BASE_CONFIG, cliApi);
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
     const response = await app.inject({
       method: 'GET',
@@ -691,9 +691,9 @@ describe('registerPluginRegistry', () => {
       snapshot: vi.fn(() => {
         throw new Error('Studio registry generation failed');
       }),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
-    await registerPluginRegistry(app, BASE_CONFIG, cliApi);
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
     const response = await app.inject({
       method: 'GET',
@@ -711,9 +711,9 @@ describe('registerPluginRegistry', () => {
 
     const cliApi = {
       snapshot: vi.fn(() => snapshot),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
-    await registerPluginRegistry(app, BASE_CONFIG, cliApi);
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
 
     const response = await app.inject({
       method: 'GET',

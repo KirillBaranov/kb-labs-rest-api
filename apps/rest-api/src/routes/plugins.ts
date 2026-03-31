@@ -7,7 +7,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import { validateManifest } from '@kb-labs/plugin-contracts';
 import { mountRoutes } from '@kb-labs/plugin-execution/http';
@@ -42,7 +42,7 @@ export async function registerPluginRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
   repoRoot: string,
-  cliApi: CliAPI,
+  registry: IEntityRegistry,
   readiness?: ReadinessState
 ): Promise<void> {
   const gatewayTimeoutMs = config.timeouts?.requestTimeout ?? 30_000;
@@ -82,7 +82,7 @@ export async function registerPluginRoutes(
       source: workspaceResolution.source,
     });
 
-    const snapshot = cliApi.snapshot();
+    const snapshot = registry.snapshot();
     const manifests = extractSnapshotManifests(snapshot);
 
     // Log discovery summary
@@ -428,19 +428,48 @@ export async function registerPluginRoutes(
 }
 
 /**
- * Register plugin registry endpoint for Studio
+ * Register plugin snapshot endpoints for Studio
  */
-export async function registerPluginRegistry(
+export async function registerPluginSnapshotRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
-  cliApi: CliAPI
+  registry: IEntityRegistry
 ): Promise<void> {
   const basePath = config.basePath;
 
-  // Legacy endpoint: returns raw manifests
+  server.post(`${basePath}/plugins/refresh`, async (_request, reply) => {
+    try {
+      await registry.refresh();
+      const snapshot = registry.snapshot();
+
+      reply.type('application/json');
+      return {
+        ok: true,
+        data: {
+          rev: snapshot.rev,
+          total: snapshot.plugins.length,
+          generatedAt: snapshot.generatedAt,
+          partial: snapshot.partial,
+          stale: snapshot.stale,
+        },
+      };
+    } catch (error) {
+      platform.logger.error(
+        'Failed to refresh plugin registry',
+        error instanceof Error ? error : new Error(String(error))
+      );
+      reply.code(500).send({
+        ok: false,
+        error: 'Failed to refresh plugin registry',
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  });
+
+  // Raw manifests endpoint for Studio/debug consumers
   server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
     try {
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
 
       // Get build timestamps and validate manifests
       const manifestsWithTimestamps = await Promise.all(
@@ -493,7 +522,7 @@ export async function registerPluginRegistry(
   // Studio should use this endpoint instead of plugins/registry
   server.get(`${basePath}/studio/registry`, async (_request, reply) => {
     try {
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
       const manifests = extractSnapshotManifests(snapshot);
 
       // Convert manifests to StudioRegistry
@@ -520,7 +549,7 @@ export async function registerPluginRegistry(
   // Plugin registry health endpoint
   server.get(`${basePath}/plugins/health`, async (_request, reply) => {
     try {
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
 
       // Collect validation errors from all manifests
       const validationIssues: Array<{ pluginId: string; errors: string[] }> = [];
@@ -534,16 +563,16 @@ export async function registerPluginRegistry(
         }
       }
 
-      // Get discovery errors (plugins that failed to load)
-      const discoveryErrors = snapshot.errors || [];
+      // Registry resolution errors (plugins that failed to load)
+      const registryErrors = snapshot.errors || [];
 
       // Determine why registry is partial
       const partialReasons: string[] = [];
       if (snapshot.corrupted) {
         partialReasons.push('snapshot_corrupted');
       }
-      if (discoveryErrors.length > 0) {
-        partialReasons.push('discovery_errors');
+      if (registryErrors.length > 0) {
+        partialReasons.push('registry_errors');
       }
       // If partial but no clear reason, it's likely initialization
       if (snapshot.partial && partialReasons.length === 0) {
@@ -552,7 +581,7 @@ export async function registerPluginRegistry(
 
       reply.type('application/json');
       return {
-        healthy: !snapshot.partial && !snapshot.stale && validationIssues.length === 0 && discoveryErrors.length === 0,
+        healthy: !snapshot.partial && !snapshot.stale && validationIssues.length === 0 && registryErrors.length === 0,
         snapshot: {
           partial: snapshot.partial,
           stale: snapshot.stale,
@@ -562,9 +591,9 @@ export async function registerPluginRegistry(
           totalManifests: snapshot.manifests.length,
           partialReasons,
         },
-        discovery: {
-          totalErrors: discoveryErrors.length,
-          errors: discoveryErrors.map((err) => ({
+        registryErrors: {
+          total: registryErrors.length,
+          items: registryErrors.map((err) => ({
             pluginPath: err.pluginPath,
             pluginId: err.pluginId,
             error: err.error,
@@ -576,14 +605,14 @@ export async function registerPluginRegistry(
           issues: validationIssues,
         },
         message:
-          discoveryErrors.length > 0
-            ? `Registry is partial - ${discoveryErrors.length} plugin(s) failed to load. Check discovery.errors for details.`
+          registryErrors.length > 0
+            ? `Registry is partial - ${registryErrors.length} plugin(s) failed to load. Check registryErrors.items for details.`
             : snapshot.partial && partialReasons.includes('initialization_incomplete')
-              ? 'Registry is partial - initialization incomplete. Try refreshing or wait for discovery to complete.'
+              ? 'Registry is partial - initialization incomplete. Try refreshing or wait for the snapshot rebuild to complete.'
               : snapshot.partial
                 ? `Registry is partial - reasons: ${partialReasons.join(', ')}`
                 : snapshot.stale
-                  ? 'Registry is stale - plugin discovery may be outdated.'
+                  ? 'Registry is stale - plugin snapshot may be outdated.'
                   : validationIssues.length > 0
                     ? `${validationIssues.length} plugin(s) have validation errors.`
                     : 'All plugins are healthy.',
@@ -612,7 +641,7 @@ export async function registerPluginRegistry(
       }
 
       // Get plugin manifest
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
       const pluginEntry = snapshot.manifests.find((entry) => entry.pluginId === pluginId);
 
       if (!pluginEntry) {

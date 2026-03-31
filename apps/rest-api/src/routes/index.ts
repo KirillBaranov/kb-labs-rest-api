@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI, RedisStatus } from '@kb-labs/cli-api';
+import type { IEntityRegistry, RedisStatus } from '@kb-labs/core-registry';
 import type { ISQLDatabase } from '@kb-labs/core-platform/adapters';
 import { platform } from '@kb-labs/core-runtime';
 import { EventHub } from '../events/hub';
@@ -13,7 +13,7 @@ import { registerEventRoutes } from './events';
 import { registerHealthRoutes } from './health';
 import { registerOpenAPIRoutes } from './openapi';
 import { registerMetricsRoutes } from './metrics';
-import { registerPluginRoutes, registerPluginRegistry } from './plugins';
+import { registerPluginRoutes, registerPluginSnapshotRoutes } from './plugins';
 import { registerWorkflowRoutes } from './workflows';
 import { registerJobsRoutes } from './jobs';
 import { registerCacheRoutes } from './cache';
@@ -45,14 +45,14 @@ export async function registerRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
   repoRoot: string,
-  cliApi: CliAPI
+  registry: IEntityRegistry
 ): Promise<void> {
   // Register route collector hook FIRST, before any routes are registered
   // This allows us to collect all routes for the /routes endpoint
   registerRouteCollector(server);
 
-  const initialSnapshot = cliApi.snapshot();
-  const initialRedisStatus = cliApi.getRedisStatus?.();
+  const initialSnapshot = registry.snapshot();
+  const initialRedisStatus = registry.getRedisStatus?.();
   const initialRedisStates = initialRedisStatus?.roles ?? {
     publisher: null,
     subscriber: null,
@@ -63,7 +63,7 @@ export async function registerRoutes(
     initialSnapshot.plugins.length > 0 && !initialSnapshot.partial && !initialSnapshot.stale;
 
   const readiness: ReadinessState = {
-    cliApiInitialized: true,
+    registryInitialized: true,
     registryLoaded,
     registryPartial: initialSnapshot.partial,
     registryStale: initialSnapshot.stale,
@@ -112,7 +112,7 @@ export async function registerRoutes(
 
   const broadcastState = async (): Promise<void> => {
     const pluginsSnapshot = metricsCollector.getLastPluginMountSnapshot();
-    const redisStatus = cliApi.getRedisStatus?.();
+    const redisStatus = registry.getRedisStatus?.();
     if (redisStatus) {
       handleRedisUpdate(redisStatus);
       readiness.redisEnabled = redisStatus.enabled;
@@ -124,7 +124,7 @@ export async function registerRoutes(
       };
     }
     try {
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
       eventHub.publish({
         type: 'registry',
         rev: snapshot.rev,
@@ -144,7 +144,7 @@ export async function registerRoutes(
     }
 
     try {
-      const health = await cliApi.getSystemHealth();
+      const health = await registry.getSystemHealth();
       const ready = isReady(readiness);
       const reason = resolveReadinessReason(readiness);
       eventHub.publish({
@@ -177,7 +177,7 @@ export async function registerRoutes(
 
   const runMount = async (): Promise<void> => {
     try {
-      await registerPluginRoutes(server, config, repoRoot, cliApi, readiness);
+      await registerPluginRoutes(server, config, repoRoot, registry, readiness);
     } finally {
       await broadcastState();
     }
@@ -241,19 +241,19 @@ export async function registerRoutes(
     (server as any).kbPluginMountPromise = mountPromise;
   };
 
-  cliApi.onChange(() => {
+  registry.onChange(() => {
     scheduleRemount();
   });
 
   const basePath = normalizeBasePath(config.basePath);
 
-  await registerHealthRoutes(server, config, repoRoot, cliApi, readiness);
+  await registerHealthRoutes(server, config, repoRoot, registry, readiness);
 
-  await registerOpenAPIRoutes(server, config, repoRoot, cliApi);
+  await registerOpenAPIRoutes(server, config, repoRoot, registry);
 
   registerMetricsRoutes(server, config);
 
-  await registerPluginRegistry(server, config, cliApi);
+  await registerPluginSnapshotRoutes(server, config, registry);
 
   // Workflow SSE streaming (long-lived connections that can't go through plugin execution)
   // All CRUD operations are handled by the workflow plugin routes (/plugins/workflow/...)
@@ -265,7 +265,7 @@ export async function registerRoutes(
 
   const platformServices = platform;
 
-  await registerCacheRoutes(server, config, cliApi);
+  await registerCacheRoutes(server, config, registry);
 
   // Initialize historical metrics collector
   const historicalCollector = new HistoricalMetricsCollector(
@@ -385,6 +385,5 @@ export async function registerRoutes(
 
   await registerDebugRoutes(server, config);
 
-  await registerEventRoutes(server, basePath, cliApi, readiness, eventHub, config);
+  await registerEventRoutes(server, basePath, registry, readiness, eventHub, config);
 }
-

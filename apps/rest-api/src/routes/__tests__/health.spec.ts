@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
-import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ReadinessState } from '../readiness';
 
@@ -117,7 +117,7 @@ describe('registerHealthRoutes', () => {
         corrupted: false,
         plugins: [],
       })),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
 
@@ -182,7 +182,7 @@ describe('registerHealthRoutes', () => {
         corrupted: false,
         plugins: snapshotPlugins as any,
       })),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
 
@@ -268,7 +268,7 @@ describe('registerHealthRoutes', () => {
           cache: 'error',
         },
       })),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
 
@@ -330,7 +330,7 @@ describe('registerHealthRoutes', () => {
         corrupted: false,
         plugins: [{ id: '@kb-labs/demo' }],
       })),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
 

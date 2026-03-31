@@ -5,8 +5,8 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI } from '@kb-labs/cli-api';
-import { mergeOpenAPISpecs } from '@kb-labs/cli-core';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
+import { mergeOpenAPISpecs } from '@kb-labs/core-registry';
 
 /**
  * Register OpenAPI routes
@@ -15,7 +15,7 @@ export async function registerOpenAPIRoutes(
   fastify: FastifyInstance,
   config: RestApiConfig,
   repoRoot: string,
-  cliApi: CliAPI
+  registry: IEntityRegistry
 ) {
   // Plugin-manifest-merged OpenAPI spec (renamed from /openapi.json).
   // /openapi.json is now owned by @fastify/swagger (Fastify-native routes).
@@ -32,11 +32,11 @@ export async function registerOpenAPIRoutes(
     },
   }, async (_, reply) => {
     try {
-      const plugins = await cliApi.listPlugins();
+      const plugins = await registry.listPlugins();
       const specs = [];
       
       for (const plugin of plugins) {
-        const spec = await cliApi.getOpenAPISpec(plugin.id);
+        const spec = await registry.getOpenAPISpec(plugin.id);
         if (spec) {
           specs.push(spec);
         }
@@ -45,7 +45,7 @@ export async function registerOpenAPIRoutes(
       const merged = mergeOpenAPISpecs(specs);
       
       // Add caching headers (1 hour)
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
       reply.header('Cache-Control', 'public, max-age=3600');
       reply.header('ETag', `"${snapshot.rev}"`);
       
@@ -65,7 +65,7 @@ export async function registerOpenAPIRoutes(
   fastify.get('/openapi/:pluginId', async (req, reply) => {
     try {
       const { pluginId } = req.params as { pluginId: string };
-      const spec = await cliApi.getOpenAPISpec(pluginId);
+      const spec = await registry.getOpenAPISpec(pluginId);
       
       if (!spec) {
         reply.code(404).send({

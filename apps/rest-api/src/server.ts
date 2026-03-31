@@ -6,7 +6,7 @@
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { registerRoutes } from './routes/index';
 import { registerPlugins } from './plugins/index';
 import { registerMiddleware } from './middleware/index';
@@ -102,7 +102,7 @@ function createPinoCompatibleLogger(logger: ILogger): any {
 export async function createServer(
   config: RestApiConfig,
   repoRoot: string,
-  cliApi: CliAPI
+  registry: IEntityRegistry
 ): Promise<FastifyInstance> {
   // HTTP/2 configuration (requires HTTPS)
   const useHttp2 = config.http2?.enabled ?? false;
@@ -186,8 +186,8 @@ export async function createServer(
     restLogger.info('Using HTTP/1.1');
   }
 
-  // Store cliApi in server instance
-  server.cliApi = cliApi;
+  // Store registry in server instance
+  server.registry = registry;
 
   // Register plugins
   await registerPlugins(server as unknown as FastifyInstance, config);
@@ -196,7 +196,7 @@ export async function createServer(
   registerMiddleware(server as unknown as FastifyInstance, config);
 
   // Register routes
-  await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, cliApi);
+  await registerRoutes(server as unknown as FastifyInstance, config, repoRoot, registry);
 
   return server as unknown as FastifyInstance;
 }

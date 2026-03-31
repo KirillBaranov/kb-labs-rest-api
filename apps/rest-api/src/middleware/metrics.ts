@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyInstance } from 'fastify';
-import type { RedisStatus } from '@kb-labs/cli-api';
+import type { RedisStatus } from '@kb-labs/core-registry';
 import {
   httpRequestDuration,
   httpRequestsTotal,

@@ -7,7 +7,7 @@ import type { FastifyBaseLogger } from 'fastify/types/logger';
 import type { FastifySchema } from 'fastify/types/schema';
 import type { FastifyTypeProvider, FastifyTypeProviderDefault } from 'fastify/types/type-provider';
 import type { ContextConfigDefault, RawReplyDefaultExpression, RawRequestDefaultExpression, RawServerBase, RawServerDefault } from 'fastify/types/utils';
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
 import type { ReadinessState } from '../routes/readiness';
 import '@fastify/type-provider-typebox';
 import type { EventHub } from '../events/hub';
@@ -22,7 +22,7 @@ declare module 'fastify/types/instance' {
     SchemaCompiler extends FastifySchema = FastifySchema,
     ContextConfig = ContextConfigDefault
   > {
-    cliApi?: CliAPI;
+    registry?: IEntityRegistry;
     kbReadiness?: ReadinessState;
     kbStartupGuard?: {
       inFlight: number;
@@ -33,7 +33,7 @@ declare module 'fastify/types/instance' {
 
 declare module 'fastify' {
   interface FastifyInstance {
-    cliApi?: CliAPI;
+    registry?: IEntityRegistry;
     kbReadiness?: ReadinessState;
     kbStartupGuard?: {
       inFlight: number;

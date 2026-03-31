@@ -5,8 +5,8 @@
 
 import { loadRestApiConfig } from '@kb-labs/rest-api-core';
 import { createServer } from './server';
-import { findRepoRoot, discoverSubRepoPaths } from '@kb-labs/core-sys';
-import { createCliAPI, type CliAPI } from '@kb-labs/cli-api';
+import { findRepoRoot } from '@kb-labs/core-sys';
+import { createRegistry, type IEntityRegistry } from '@kb-labs/core-registry';
 import { platform, createServiceBootstrap, loadEnvFromRoot } from '@kb-labs/core-runtime';
 import { SystemMetricsCollector } from './services/system-metrics-collector';
 import * as path from 'node:path';
@@ -14,7 +14,7 @@ import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 
 // Singleton CLI API instance for cleanup
-let cliApiInstance: CliAPI | null = null;
+let registryInstance: IEntityRegistry | null = null;
 
 // System metrics collector instance for cleanup
 let metricsCollector: SystemMetricsCollector | null = null;
@@ -150,78 +150,39 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   bootstrapLogger.info('Resolved repo root', { cwd, repoRoot });
   bootstrapLogger.info('Platform adapters initialized');
 
-  // Initialize CLI API singleton
-  bootstrapLogger.info('Initializing CLI API');
-  const redisConfig = config.redis;
-  
-  // Collect all sub-repo paths for plugin discovery.
-  // Uses .gitmodules for accurate nested layout — no hardcoded category dirs.
-  const discoveryRoots = [repoRoot, ...discoverSubRepoPaths(repoRoot)];
-  bootstrapLogger.info('Discovery roots configured', {
-    roots: discoveryRoots,
-    rootsCount: discoveryRoots.length,
-  });
-  
-  // Registry snapshot TTL based on environment
-  // Development: 10 minutes (frequent changes, but not too aggressive)
-  // Production: 1 hour (stable deployments, less churn)
+  // Initialize entity registry
+  bootstrapLogger.info('Initializing entity registry');
+
   const isDevelopment = process.env.NODE_ENV !== 'production';
   const snapshotTTL = isDevelopment
     ? 10 * 60 * 1000  // 10 minutes for development
     : 60 * 60 * 1000; // 1 hour for production
 
-  const cliApi = await createCliAPI({
-    discovery: {
-      strategies: ['workspace', 'pkg', 'dir', 'file'],
-      roots: discoveryRoots,
-      allowDowngrade: false,
-    },
+  const registry = await createRegistry({
+    root: repoRoot,
     cache: {
-      inMemory: true,
       ttlMs: snapshotTTL,
+      adapter: platform.cache,
     },
-    logger: {
-      level: 'info', // CLI API internal logging level
-    },
-    snapshot: {
-      mode: 'producer', // REST API should produce snapshots, not consume them
-      refreshIntervalMs: 60_000,
-    },
-    pubsub: redisConfig
-      ? {
-          redisUrl: redisConfig.url,
-          namespace: redisConfig.namespace,
-        }
-      : undefined,
   });
-  
-  // Initialize CLI API (discovers plugins)
-  bootstrapLogger.info('Initializing CLI API discovery');
-  await cliApi.initialize();
-  
-  // Log discovered plugins
-  const plugins = await cliApi.listPlugins();
-  bootstrapLogger.info('CLI API discovery complete', {
+
+  const plugins = registry.listPlugins();
+  bootstrapLogger.info('Entity registry initialized', {
     pluginsFound: plugins.length,
     pluginIds: plugins.map(p => `${p.id}@${p.version}`),
   });
-  
-  // Store singleton for cleanup
-  cliApiInstance = cliApi;
-  
-  // Subscribe to changes
-  cliApi.onChange((diff: { added: unknown[]; removed: unknown[]; changed: unknown[] }) => {
-    bootstrapLogger.info('CLI registry changed', {
+
+  registryInstance = registry;
+
+  registry.onChange((diff) => {
+    bootstrapLogger.info('Registry changed', {
       added: diff.added.length,
       removed: diff.removed.length,
       changed: diff.changed.length,
     });
   });
 
-  // Create server with cliApi
-  // Note: registerRoutes() now waits for initial plugin route mounting to complete
-  // before returning, so routes are already mounted when createServer() returns
-  const server = await createServer(config, repoRoot, cliApi);
+  const server = await createServer(config, repoRoot, registry);
 
   // Start system metrics collector
   bootstrapLogger.info('Starting system metrics collector');
@@ -247,9 +208,9 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     }
 
     // Dispose CLI API
-    if (cliApiInstance) {
-      await cliApiInstance.dispose();
-      cliApiInstance = null;
+    if (registryInstance) {
+      await registryInstance.dispose();
+      registryInstance = null;
     }
 
     // Shutdown platform (includes ExecutionBackend and all adapters)

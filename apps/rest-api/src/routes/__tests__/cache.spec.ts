@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { CliAPI, RegistrySnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, RegistrySnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { registerCacheRoutes } from '../cache';
 
@@ -37,7 +37,7 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
 
 describe('registerCacheRoutes', () => {
   let app: ReturnType<typeof Fastify>;
-  let mockCliApi: CliAPI;
+  let mockCliApi: IEntityRegistry;
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -47,7 +47,7 @@ describe('registerCacheRoutes', () => {
       snapshot: vi.fn(),
       refresh: vi.fn(),
       listPlugins: vi.fn(),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     await registerCacheRoutes(app, BASE_CONFIG, mockCliApi);
   });
@@ -115,7 +115,7 @@ describe('registerCacheRoutes', () => {
       expect(payload.data.newRev).toBe(43);
     });
 
-    it('includes plugin discovery count', async () => {
+    it('includes plugin registry count', async () => {
       const snapshot = createMockSnapshot(1);
       const plugins = Array.from({ length: 15 }, (_, i) => ({
         id: `@kb-labs/plugin-${i}`,

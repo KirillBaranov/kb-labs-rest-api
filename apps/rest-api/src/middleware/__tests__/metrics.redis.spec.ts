@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { RedisStatus } from '@kb-labs/cli-api'
+import type { RedisStatus } from '@kb-labs/core-registry'
 import { metricsCollector } from '../metrics'
 
 function redisStatus(overrides: Partial<RedisStatus> = {}): RedisStatus {

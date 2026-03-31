@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
 import type { EventHub, BroadcastEvent } from '../events/hub';
@@ -10,7 +10,7 @@ import { buildRegistrySseAuthHook } from '../utils/sse-auth';
 export async function registerEventRoutes(
   server: FastifyInstance,
   basePath: string,
-  cliApi: CliAPI,
+  registry: IEntityRegistry,
   readiness: ReadinessState,
   eventHub: EventHub,
   config: RestApiConfig
@@ -46,7 +46,7 @@ export async function registerEventRoutes(
 
       const unsubscribe = eventHub.subscribe(send);
 
-      const snapshot = cliApi.snapshot();
+      const snapshot = registry.snapshot();
       const checksumAlgorithm = snapshot.checksumAlgorithm === 'sha256' ? 'sha256' : undefined;
       send({
         type: 'registry',
@@ -61,13 +61,13 @@ export async function registerEventRoutes(
         previousChecksum: snapshot.previousChecksum ?? null,
       });
 
-      const healthPromise = cliApi
+      const healthPromise = registry
         .getSystemHealth()
         .then((health: SystemHealthSnapshot) => {
           const ready = isReady(readiness);
           const reason = resolveReadinessReason(readiness);
           const pluginSnapshot = metricsCollector.getLastPluginMountSnapshot();
-          const redisStatus = cliApi.getRedisStatus?.();
+          const redisStatus = registry.getRedisStatus?.();
           send({
             type: 'health',
             status: health.status,

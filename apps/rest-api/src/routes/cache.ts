@@ -6,7 +6,7 @@ import { platform } from '@kb-labs/core-runtime';
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { normalizeBasePath } from '../utils/path-helpers';
 
 /**
@@ -15,7 +15,7 @@ import { normalizeBasePath } from '../utils/path-helpers';
 export async function registerCacheRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
-  cliApi: CliAPI
+  registry: IEntityRegistry
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath);
 
@@ -28,7 +28,7 @@ export async function registerCacheRoutes(
 
     try {
       // Capture current state
-      const beforeSnapshot = cliApi.snapshot();
+      const beforeSnapshot = registry.snapshot();
       const previousRev = beforeSnapshot.rev;
 
       platform.logger.info('Manual cache invalidation requested', {
@@ -37,11 +37,11 @@ export async function registerCacheRoutes(
       });
       // Force cache invalidation and refresh discovery
       // This will trigger re-discovery and clear stale cache
-      await cliApi.refresh();
+      await registry.refresh();
 
       // Get new state
-      const afterSnapshot = cliApi.snapshot();
-      const plugins = await cliApi.listPlugins();
+      const afterSnapshot = registry.snapshot();
+      const plugins = await registry.listPlugins();
 
       const elapsed = Date.now() - start;
 

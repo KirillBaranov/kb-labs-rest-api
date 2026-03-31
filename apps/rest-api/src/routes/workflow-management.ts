@@ -7,7 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { serializerCompiler, validatorCompiler } from 'fastify-type-provider-zod';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { IWorkflowEngine, ICronManager } from '@kb-labs/core-platform';
 import {
@@ -55,7 +55,7 @@ function getWorkflowId(params: unknown): string {
 export async function registerWorkflowManagementRoutes(
   server: FastifyInstance,
   config: RestApiConfig,
-  cliApi: CliAPI,
+  registry: IEntityRegistry,
   platform: PlatformServices,
   workflowEngine: IWorkflowEngine | null,
   cronManager: ICronManager | null,
@@ -70,7 +70,7 @@ export async function registerWorkflowManagementRoutes(
 
   // Initialize services
   const workflowService = new WorkflowService({
-    cliApi,
+    registry,
     platform,
     workflowStorageDir: '.kb/workflows',
   });

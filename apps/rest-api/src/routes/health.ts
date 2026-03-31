@@ -5,7 +5,7 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { CliAPI, SystemHealthSnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
@@ -34,7 +34,7 @@ export async function registerHealthRoutes(
   fastify: FastifyInstance,
   config: RestApiConfig,
   _repoRoot: string,
-  cliApi: CliAPI,
+  registry: IEntityRegistry,
   readiness: ReadinessState
 ): Promise<void> {
   const basePath = normalizeBasePath(config.basePath);
@@ -45,8 +45,8 @@ export async function registerHealthRoutes(
     fastify.get(path, async (_request, reply) => {
       const eventHub = fastify.kbEventHub;
       try {
-        const baseSnapshot = await getBaseSnapshot(cliApi);
-        const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(cliApi);
+        const baseSnapshot = await getBaseSnapshot(registry);
+        const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(registry);
         readiness.registryLoaded = registryLoaded;
         readiness.registryPartial = registryPartial;
         readiness.registryStale = registryStale;
@@ -87,7 +87,7 @@ export async function registerHealthRoutes(
   for (const path of readyPaths) {
     fastify.get(path, async (_request, reply) => {
       const eventHub = fastify.kbEventHub;
-      const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(cliApi);
+      const { registryLoaded, registryPartial, registryStale } = evaluateRegistryState(registry);
       readiness.registryLoaded = registryLoaded;
       readiness.registryPartial = registryPartial;
       readiness.registryStale = registryStale;
@@ -117,7 +117,7 @@ export async function registerHealthRoutes(
   }
 }
 
-async function getBaseSnapshot(cliApi: CliAPI): Promise<SystemHealthSnapshot> {
+async function getBaseSnapshot(registry: IEntityRegistry): Promise<SystemHealthSnapshot> {
   const now = Date.now();
   if (cachedBaseSnapshot && now < cachedBaseSnapshot.expiresAt) {
     return cachedBaseSnapshot.base;
@@ -127,7 +127,7 @@ async function getBaseSnapshot(cliApi: CliAPI): Promise<SystemHealthSnapshot> {
     return inFlightBaseSnapshot;
   }
 
-  inFlightBaseSnapshot = cliApi
+  inFlightBaseSnapshot = registry
     .getSystemHealth({
       uptimeSec: process.uptime(),
       version: { rest: REST_VERSION },
@@ -261,12 +261,12 @@ function sanitizeError(error: unknown): string {
   return firstLine.length > 160 ? `${firstLine.slice(0, 157)}...` : firstLine;
 }
 
-function evaluateRegistryState(cliApi: CliAPI): {
+function evaluateRegistryState(registry: IEntityRegistry): {
   registryLoaded: boolean;
   registryPartial: boolean;
   registryStale: boolean;
 } {
-  const snapshot = cliApi.snapshot();
+  const snapshot = registry.snapshot();
   return {
     registryLoaded: snapshot.plugins.length > 0 && !snapshot.partial && !snapshot.stale,
     registryPartial: snapshot.partial,
@@ -288,8 +288,8 @@ function buildReadinessResponse(readiness: ReadinessState) {
     status,
     reason,
     components: {
-      cliApi: {
-        initialized: readiness.cliApiInitialized,
+      registry: {
+        initialized: readiness.registryInitialized,
       },
       registry: {
         loaded: readiness.registryLoaded,

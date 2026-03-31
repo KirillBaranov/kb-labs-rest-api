@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
-import type { CliAPI, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/cli-api';
+import type { IEntityRegistry, RegistrySnapshot, SystemHealthSnapshot } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { EventHub, BroadcastEvent } from '../../events/hub';
 import type { ReadinessState } from '../readiness';
@@ -104,7 +104,7 @@ function createMockReadinessState(): ReadinessState {
 
 describe('registerEventRoutes', () => {
   let app: ReturnType<typeof Fastify>;
-  let mockCliApi: CliAPI;
+  let mockCliApi: IEntityRegistry;
   let mockEventHub: EventHub;
   let readiness: ReadinessState;
   let subscribers: Array<(event: BroadcastEvent) => void> = [];
@@ -126,7 +126,7 @@ describe('registerEventRoutes', () => {
           cache: null,
         },
       })),
-    } as unknown as CliAPI;
+    } as unknown as IEntityRegistry;
 
     mockEventHub = {
       subscribe: vi.fn((callback: (event: BroadcastEvent) => void) => {

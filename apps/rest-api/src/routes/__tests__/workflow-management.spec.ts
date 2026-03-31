@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import Fastify from 'fastify';
 
-import type { CliAPI } from '@kb-labs/cli-api';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { PlatformServices } from '@kb-labs/plugin-contracts';
 import type { WorkflowSpec } from '@kb-labs/workflow-contracts';
@@ -63,7 +63,7 @@ const mockPlatform: PlatformServices = {
   },
 } as any;
 
-const mockCliApi = {} as CliAPI;
+const mockCliApi = {} as IEntityRegistry;
 
 function createSampleWorkflowSpec(): WorkflowSpec {
   return {
