@@ -18,7 +18,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import type { ReadinessState } from './readiness';
 import { resolveWorkspaceRoot } from '@kb-labs/core-workspace';
-import { metricsCollector } from '../middleware/metrics.js';
+import { metricsCollector, restDomainOperationMetrics } from '../middleware/metrics.js';
 import { performance } from 'node:perf_hooks';
 
 interface SnapshotManifestEntry {
@@ -217,6 +217,7 @@ export async function registerPluginRoutes(
         });
 
         if (validRoutes.length === 0) {
+          restDomainOperationMetrics.recordOperation('plugin.routes.mount', 0, 'error');
           platform.logger.error('All routes failed validation, skipping plugin', undefined, {
             plugin: `${manifest.id}@${manifest.version}`,
             pluginRoot,
@@ -286,6 +287,7 @@ export async function registerPluginRoutes(
         }
 
         mountMetrics.recordSuccess(manifest.id, routesCount, duration);
+        restDomainOperationMetrics.recordOperation('plugin.routes.mount', duration, 'ok');
 
         for (const route of manifest.rest?.routes ?? []) {
           platform.logger.info('Mounted route', {
@@ -361,6 +363,7 @@ export async function registerPluginRoutes(
         succeeded.push(manifest.id);
       } catch (error) {
         mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
+        restDomainOperationMetrics.recordOperation('plugin.routes.mount', 0, 'error');
         platform.logger.error(
           'Failed to mount plugin routes',
           error instanceof Error ? error : new Error(String(error)),
@@ -439,8 +442,12 @@ export async function registerPluginSnapshotRoutes(
 
   server.post(`${basePath}/plugins/refresh`, async (_request, reply) => {
     try {
-      await registry.refresh();
-      const snapshot = registry.snapshot();
+      await restDomainOperationMetrics.observeOperation('plugin.registry.refresh', async () => {
+        await registry.refresh();
+      });
+      const snapshot = await restDomainOperationMetrics.observeOperation('plugin.registry.snapshot', async () =>
+        registry.snapshot(),
+      );
 
       reply.type('application/json');
       return {
@@ -469,7 +476,9 @@ export async function registerPluginSnapshotRoutes(
   // Raw manifests endpoint for Studio/debug consumers
   server.get(`${basePath}/plugins/registry`, async (_request, reply) => {
     try {
-      const snapshot = registry.snapshot();
+      const snapshot = await restDomainOperationMetrics.observeOperation('plugin.registry.snapshot', async () =>
+        registry.snapshot(),
+      );
 
       // Get build timestamps and validate manifests
       const manifestsWithTimestamps = await Promise.all(
@@ -518,22 +527,22 @@ export async function registerPluginSnapshotRoutes(
     }
   });
 
-  // New endpoint: returns pre-computed StudioRegistry
-  // Studio should use this endpoint instead of plugins/registry
-  server.get(`${basePath}/studio/registry`, async (_request, reply) => {
+  // Studio Registry V2 — returns plugin pages and menus for Module Federation
+  server.get(`${basePath}/studio/registry`, {
+    schema: { tags: ['Studio'], summary: 'Get Studio Registry V2 (plugin pages for Module Federation)' },
+  }, async (_request, reply) => {
     try {
-      const snapshot = registry.snapshot();
+      const snapshot = await restDomainOperationMetrics.observeOperation('plugin.studio.registry', async () =>
+        registry.snapshot(),
+      );
       const manifests = extractSnapshotManifests(snapshot);
 
-      // Convert manifests to StudioRegistry
+      // Only plugins with studio V2 config
       const studioManifests = manifests
-        .filter(entry => entry.manifest.studio)
-        .map(entry => entry.manifest);
+        .filter(entry => entry.manifest.studio?.version === 2)
+        .map(entry => ({ manifest: entry.manifest, resolvedPath: entry.pluginRoot }));
 
-      const studioRegistry = combineManifestsToRegistry(
-        studioManifests,
-        String(snapshot.rev)
-      );
+      const studioRegistry = combineManifestsToRegistry(studioManifests);
 
       reply.type('application/json');
       return studioRegistry;
@@ -549,7 +558,9 @@ export async function registerPluginSnapshotRoutes(
   // Plugin registry health endpoint
   server.get(`${basePath}/plugins/health`, async (_request, reply) => {
     try {
-      const snapshot = registry.snapshot();
+      const snapshot = await restDomainOperationMetrics.observeOperation('plugin.registry.health', async () =>
+        registry.snapshot(),
+      );
 
       // Collect validation errors from all manifests
       const validationIssues: Array<{ pluginId: string; errors: string[] }> = [];
@@ -641,7 +652,9 @@ export async function registerPluginSnapshotRoutes(
       }
 
       // Get plugin manifest
-      const snapshot = registry.snapshot();
+      const snapshot = await restDomainOperationMetrics.observeOperation('plugin.registry.snapshot', async () =>
+        registry.snapshot(),
+      );
       const pluginEntry = snapshot.manifests.find((entry) => entry.pluginId === pluginId);
 
       if (!pluginEntry) {
@@ -665,11 +678,13 @@ User Question: ${question}
 Please answer the question based on the plugin manifest above.`;
 
       // Call LLM
-      const response = await platform.llm.complete(userPrompt, {
-        systemPrompt,
-        temperature: 0.3,
-        maxTokens: 1000,
-      });
+      const response = await restDomainOperationMetrics.observeOperation('plugin.assistant.ask', () =>
+        platform.llm.complete(userPrompt, {
+          systemPrompt,
+          temperature: 0.3,
+          maxTokens: 1000,
+        }),
+      );
 
       reply.type('application/json');
       return {
