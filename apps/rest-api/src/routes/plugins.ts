@@ -540,7 +540,7 @@ export async function registerPluginSnapshotRoutes(
       // Only plugins with studio V2 config
       const studioManifests = manifests
         .filter(entry => entry.manifest.studio?.version === 2)
-        .map(entry => ({ manifest: entry.manifest, resolvedPath: entry.pluginRoot }));
+        .map(entry => ({ manifest: entry.manifest, pluginRoot: entry.pluginRoot }));
 
       const studioRegistry = combineManifestsToRegistry(studioManifests);
 
@@ -553,6 +553,60 @@ export async function registerPluginSnapshotRoutes(
         message: error instanceof Error ? error.message : String(error),
       });
     }
+  });
+
+  // Widget bundle static files — serves dist/widgets/ from plugin packages
+  server.get<{
+    Params: { scope: string; name: string; '*': string };
+  }>('/plugins/@:scope/:name/widgets/*', {
+    schema: { hide: true },
+  }, async (request, reply) => {
+    const { scope, name } = request.params;
+    const filePath = request.params['*'];
+
+    if (!scope || !name || !filePath || filePath.includes('..')) {
+      return reply.code(400).send({ error: 'Invalid path' });
+    }
+
+    const pluginId = `@${scope}/${name}`;
+
+    // Find the plugin's widgetBundleDir from registry
+    const snapshot = registry.snapshot();
+    const manifests = extractSnapshotManifests(snapshot);
+    const entry = manifests.find(e => e.manifest.id === pluginId && e.manifest.studio?.version === 2);
+
+    if (!entry) {
+      return reply.code(404).send({ error: `No widget bundle for ${pluginId}` });
+    }
+
+    const { join, extname } = await import('node:path');
+    const { createReadStream, existsSync, statSync } = await import('node:fs');
+
+    const bundleDir = join(entry.pluginRoot, 'dist', 'widgets');
+    const fullPath = join(bundleDir, filePath);
+
+    if (!fullPath.startsWith(bundleDir)) {
+      return reply.code(400).send({ error: 'Invalid path' });
+    }
+
+    if (!existsSync(fullPath) || !statSync(fullPath).isFile()) {
+      return reply.code(404).send({ error: `Widget file not found: ${pluginId}/widgets/${filePath}` });
+    }
+
+    const MIME: Record<string, string> = {
+      '.js': 'application/javascript', '.mjs': 'application/javascript',
+      '.css': 'text/css', '.json': 'application/json', '.map': 'application/json',
+    };
+
+    const ext = extname(filePath);
+    const isEntry = filePath === 'remoteEntry.js';
+
+    return reply
+      .code(200)
+      .header('Content-Type', MIME[ext] ?? 'application/octet-stream')
+      .header('Content-Length', statSync(fullPath).size)
+      .header('Cache-Control', isEntry ? 'public, max-age=10, must-revalidate' : 'public, max-age=31536000, immutable')
+      .send(createReadStream(fullPath));
   });
 
   // Plugin registry health endpoint

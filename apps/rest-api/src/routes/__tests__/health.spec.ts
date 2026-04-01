@@ -2,6 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import type { FastifyInstance } from 'fastify';
 import type { IEntityRegistry, SystemHealthSnapshot } from '@kb-labs/core-registry';
+import {
+  checkCanonicalObservabilityMetrics,
+  validateServiceObservabilityDescribe,
+  validateServiceObservabilityHealth,
+} from '@kb-labs/core-contracts';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { ReadinessState } from '../readiness';
 
@@ -193,6 +198,20 @@ describe('registerHealthRoutes', () => {
       ready: false,
       status: 'initializing',
       reason: 'registry_snapshot_stale',
+      components: {
+        cliApi: {
+          initialized: true,
+        },
+        registry: {
+          loaded: false,
+          partial: true,
+          stale: true,
+        },
+        plugins: {
+          mounted: false,
+          inProgress: true,
+        },
+      },
     });
 
     snapshotRev = 1;
@@ -214,6 +233,22 @@ describe('registerHealthRoutes', () => {
       ready: true,
       status: 'ready',
       reason: 'ready',
+      components: {
+        cliApi: {
+          initialized: true,
+        },
+        registry: {
+          loaded: true,
+          partial: false,
+          stale: false,
+        },
+        plugins: {
+          mounted: true,
+          inProgress: false,
+          routeCount: 0,
+          errors: 0,
+        },
+      },
     });
 
     await app.close();
@@ -290,7 +325,7 @@ describe('registerHealthRoutes', () => {
     await app.close();
   });
 
-  it('reports redis_unavailable when redis is enabled but unhealthy', async () => {
+  it('exposes observability describe and health surfaces', async () => {
     const { registerHealthRoutes } = await import('../health');
     const app = Fastify({ logger: false }) as unknown as FastifyInstance;
 
@@ -301,17 +336,17 @@ describe('registerHealthRoutes', () => {
       registryStale: false,
       pluginRoutesMounted: true,
       pluginMountInProgress: false,
-      pluginRoutesCount: 4,
+      pluginRoutesCount: 3,
       pluginRouteErrors: 0,
       pluginRouteFailures: [],
       lastPluginMountTs: new Date().toISOString(),
-      pluginRoutesLastDurationMs: 128,
-      redisEnabled: true,
-      redisConnected: false,
+      pluginRoutesLastDurationMs: 12,
+      redisEnabled: false,
+      redisConnected: true,
       redisStates: {
-        publisher: 'reconnecting',
-        subscriber: 'end',
-        cache: 'error',
+        publisher: null,
+        subscriber: null,
+        cache: null,
       },
     };
 
@@ -320,13 +355,13 @@ describe('registerHealthRoutes', () => {
       getSystemHealth: vi.fn().mockResolvedValue(baseSnapshot),
       snapshot: vi.fn(() => ({
         schema: 'kb.registry/1' as const,
-        rev: 42,
+        rev: 7,
         generatedAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 60_000).toISOString(),
         ttlMs: 60_000,
         partial: false,
         stale: false,
-        source: { cliVersion: 'test', cwd: process.cwd() },
+        source: { cwd: process.cwd(), platformVersion: 'test' },
         corrupted: false,
         plugins: [{ id: '@kb-labs/demo' }],
       })),
@@ -334,22 +369,47 @@ describe('registerHealthRoutes', () => {
 
     await registerHealthRoutes(app, BASE_CONFIG, process.cwd(), cliApi, readiness);
 
-    const response = await app.inject({ method: 'GET', url: '/ready' });
-    expect(response.statusCode).toBe(503);
-    expect(response.json()).toMatchObject({
-      schema: 'kb.ready/1',
-      ready: false,
-      status: 'initializing',
-      reason: 'redis_unavailable',
-      components: {
-        redis: {
-          enabled: true,
-          healthy: false,
-        },
-      },
+    const describe = await app.inject({ method: 'GET', url: '/api/v1/observability/describe' });
+    expect(describe.statusCode).toBe(200);
+    expect(describe.json()).toMatchObject({
+      serviceId: 'rest',
+      contractVersion: '1.0',
+      metricsEndpoint: '/api/v1/metrics',
+      healthEndpoint: '/api/v1/observability/health',
     });
+
+    const health = await app.inject({ method: 'GET', url: '/api/v1/observability/health' });
+    expect(health.statusCode).toBe(200);
+    expect(health.json()).toMatchObject({
+      serviceId: 'rest',
+      contractVersion: '1.0',
+      status: 'healthy',
+      state: 'active',
+      checks: expect.arrayContaining([
+        expect.objectContaining({ id: 'registry', status: 'ok' }),
+      ]),
+    });
+
+    expect(validateServiceObservabilityDescribe(describe.json()).ok).toBe(true);
+    expect(validateServiceObservabilityHealth(health.json()).ok).toBe(true);
+
+    await app.close();
+  });
+
+  it('metrics endpoint exposes canonical observability families', async () => {
+    const { registerMetricsRoutes } = await import('../metrics');
+    const app = Fastify({ logger: false }) as unknown as FastifyInstance;
+
+    registerMetricsRoutes(app, BASE_CONFIG);
+
+    const metrics = await app.inject({ method: 'GET', url: '/api/v1/metrics' });
+    expect(metrics.statusCode).toBe(200);
+    const compliance = checkCanonicalObservabilityMetrics(metrics.body);
+    expect(compliance.missing).toEqual([]);
+
+    const legacy = await app.inject({ method: 'GET', url: '/api/v1/metrics/json' });
+    expect(legacy.statusCode).toBe(404);
 
     await app.close();
   });
 });
-

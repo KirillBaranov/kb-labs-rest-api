@@ -9,9 +9,11 @@ import { findRepoRoot } from '@kb-labs/core-sys';
 import { createRegistry, type IEntityRegistry } from '@kb-labs/core-registry';
 import { platform, createServiceBootstrap, loadEnvFromRoot } from '@kb-labs/core-runtime';
 import { SystemMetricsCollector } from './services/system-metrics-collector';
+import { metricsCollector as requestMetricsCollector, restDomainOperationMetrics } from './middleware/metrics.js';
 import * as path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 
 // Singleton CLI API instance for cleanup
 let registryInstance: IEntityRegistry | null = null;
@@ -158,6 +160,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
     ? 10 * 60 * 1000  // 10 minutes for development
     : 60 * 60 * 1000; // 1 hour for production
 
+  const registryInitStart = performance.now();
   const registry = await createRegistry({
     root: repoRoot,
     cache: {
@@ -165,6 +168,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
       adapter: platform.cache,
     },
   });
+  restDomainOperationMetrics.recordOperation('registry.init', performance.now() - registryInitStart, 'ok');
 
   const plugins = registry.listPlugins();
   bootstrapLogger.info('Entity registry initialized', {
@@ -175,6 +179,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
   registryInstance = registry;
 
   registry.onChange((diff) => {
+    restDomainOperationMetrics.recordOperation('registry.refresh', 0, 'ok');
     bootstrapLogger.info('Registry changed', {
       added: diff.added.length,
       removed: diff.removed.length,
@@ -186,7 +191,7 @@ export async function bootstrap(cwd: string = process.cwd()): Promise<void> {
 
   // Start system metrics collector
   bootstrapLogger.info('Starting system metrics collector');
-  metricsCollector = new SystemMetricsCollector();
+  metricsCollector = new SystemMetricsCollector('rest', () => requestMetricsCollector.getActiveRequests());
   await metricsCollector.start(10000, 60000); // Collect every 10s, TTL 60s
 
   // Start server

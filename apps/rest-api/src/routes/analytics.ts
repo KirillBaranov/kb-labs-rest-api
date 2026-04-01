@@ -7,6 +7,7 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import { platform } from '@kb-labs/core-runtime';
+import { restDomainOperationMetrics } from '../middleware/metrics.js';
 import type {
   EventsQuery,
   EventsResponse,
@@ -86,7 +87,10 @@ export async function registerAnalyticsRoutes(
 
         fastify.log.debug({ query }, 'Fetching analytics events');
 
-        const response: EventsResponse = await analytics.getEvents(query);
+        const response: EventsResponse = await restDomainOperationMetrics.observeOperation(
+          'analytics.events.query',
+          () => analytics.getEvents(query),
+        );
 
         fastify.log.debug(
           {
@@ -145,7 +149,7 @@ export async function registerAnalyticsRoutes(
 
         if (!stats) {
           fastify.log.debug('Cache miss, fetching stats from adapter');
-          stats = await analytics.getStats();
+          stats = await restDomainOperationMetrics.observeOperation('analytics.stats.get', () => analytics.getStats());
           await platform.cache.set(cacheKey, stats, 60 * 1000); // 60 second TTL
         } else {
           fastify.log.debug('Cache hit, returning cached stats');
@@ -201,7 +205,10 @@ export async function registerAnalyticsRoutes(
 
         fastify.log.debug('Fetching analytics buffer status');
 
-        const status: BufferStatus | null = await analytics.getBufferStatus();
+        const status: BufferStatus | null = await restDomainOperationMetrics.observeOperation(
+          'analytics.buffer.status',
+          () => analytics.getBufferStatus(),
+        );
 
         if (status === null) {
           fastify.log.debug('Buffer status not applicable for current analytics backend');
@@ -267,7 +274,10 @@ export async function registerAnalyticsRoutes(
 
         fastify.log.debug('Fetching analytics DLQ status');
 
-        const status: DlqStatus | null = await analytics.getDlqStatus();
+        const status: DlqStatus | null = await restDomainOperationMetrics.observeOperation(
+          'analytics.dlq.status',
+          () => analytics.getDlqStatus(),
+        );
 
         if (status === null) {
           fastify.log.debug('DLQ status not applicable for current analytics backend');

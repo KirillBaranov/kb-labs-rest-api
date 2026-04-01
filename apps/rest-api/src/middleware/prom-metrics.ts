@@ -51,6 +51,63 @@ export const processUptime = new Gauge({
   registers: [promRegistry],
 });
 
+export const processCpuPercent = new Gauge({
+  name: 'process_cpu_percent',
+  help: 'Current process CPU usage percentage',
+  registers: [promRegistry],
+});
+
+export const processRssBytes = new Gauge({
+  name: 'process_rss_bytes',
+  help: 'Current process resident set size in bytes',
+  registers: [promRegistry],
+});
+
+export const processHeapUsedBytes = new Gauge({
+  name: 'process_heap_used_bytes',
+  help: 'Current process heap used in bytes',
+  registers: [promRegistry],
+});
+
+export const processEventLoopLagMs = new Gauge({
+  name: 'process_event_loop_lag_ms',
+  help: 'Current event loop lag in milliseconds',
+  registers: [promRegistry],
+});
+
+export const serviceHealthStatus = new Gauge({
+  name: 'service_health_status',
+  help: 'Service health status (2=healthy, 1=degraded, 0=unhealthy)',
+  registers: [promRegistry],
+});
+
+export const serviceRestartsTotal = new Gauge({
+  name: 'service_restarts_total',
+  help: 'Service restart counter within current process lifetime',
+  registers: [promRegistry],
+});
+
+export const serviceActiveOperations = new Gauge({
+  name: 'service_active_operations',
+  help: 'Current number of active operations',
+  registers: [promRegistry],
+});
+
+export const serviceOperationTotal = new Counter({
+  name: 'service_operation_total',
+  help: 'Total number of service operations',
+  labelNames: ['operation', 'status'],
+  registers: [promRegistry],
+});
+
+export const serviceOperationDuration = new Histogram({
+  name: 'service_operation_duration_ms',
+  help: 'Service operation duration in milliseconds',
+  labelNames: ['operation', 'status'],
+  buckets: [5, 10, 25, 50, 100, 250, 500, 1000, 2500, 5000, 10000],
+  registers: [promRegistry],
+});
+
 /**
  * Header policy metrics
  */
@@ -193,6 +250,30 @@ export const redisRoleState = new Gauge({
 export function updateProcessUptime(startTimeMs: number): void {
   const uptimeSeconds = (Date.now() - startTimeMs) / 1000;
   processUptime.set(uptimeSeconds);
+}
+
+export function updateRuntimeObservabilityMetrics(input: {
+  cpuPercent: number;
+  rssBytes: number;
+  heapUsedBytes: number;
+  eventLoopLagMs: number;
+  activeOperations: number;
+  healthStatus?: 'healthy' | 'degraded' | 'unhealthy';
+}): void {
+  processCpuPercent.set(input.cpuPercent);
+  processRssBytes.set(input.rssBytes);
+  processHeapUsedBytes.set(input.heapUsedBytes);
+  processEventLoopLagMs.set(input.eventLoopLagMs);
+  serviceActiveOperations.set(input.activeOperations);
+  serviceRestartsTotal.set(0);
+
+  if (input.healthStatus) {
+    updateServiceHealthStatus(input.healthStatus);
+  }
+}
+
+export function updateServiceHealthStatus(status: 'healthy' | 'degraded' | 'unhealthy'): void {
+  serviceHealthStatus.set(status === 'healthy' ? 2 : status === 'degraded' ? 1 : 0);
 }
 
 /**

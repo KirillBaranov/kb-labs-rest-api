@@ -49,6 +49,12 @@ vi.mock('../../middleware/metrics', () => ({
     registerRouteBudget: vi.fn(),
     completePluginMount: vi.fn(),
   },
+  restDomainOperationMetrics: {
+    recordOperation: vi.fn(),
+    observeOperation: vi.fn(async (_operation: string, fn: () => unknown | Promise<unknown>) => fn()),
+    getTopOperations: vi.fn(() => []),
+    getMetricLines: vi.fn(() => []),
+  },
 }));
 
 vi.mock('node:fs/promises');

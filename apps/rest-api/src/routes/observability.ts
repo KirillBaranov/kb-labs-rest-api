@@ -14,6 +14,7 @@ import type { HistoricalMetricsCollector } from '../services/historical-metrics'
 import type { IncidentStorage } from '../services/incident-storage';
 import { IncidentAnalyzer } from '../services/incident-analyzer';
 import type { SystemMetrics } from '../services/system-metrics-collector';
+import { metricsCollector } from '../middleware/metrics.js';
 
 const execAsync = promisify(exec);
 
@@ -967,46 +968,39 @@ export async function registerObservabilityRoutes(
         // Fetch current metrics
         if (contextConfig.includeMetrics) {
           try {
-            const metricsUrl = process.env.KB_REST_API_URL || 'http://localhost:5050';
-            // Note: basePath is /api/v1 by default
-            const metricsResponse = await fetch(`${metricsUrl}/api/v1/metrics/json`, {
-              signal: AbortSignal.timeout(5000),
-            });
+            const metrics = metricsCollector.getMetrics();
 
-            if (metricsResponse.ok) {
-               
-              const response = await metricsResponse.json() as any;
-              // API returns { ok: true, data: {...} } wrapper
-              const metrics = response.data ?? response;
+            const errorRate = metrics.requests.total
+              ? (((metrics.requests.clientErrors ?? 0) + (metrics.requests.serverErrors ?? 0)) / metrics.requests.total * 100)
+              : 0;
 
-              const errorRate = metrics.requests?.total
-                ? (((metrics.requests.clientErrors ?? 0) + (metrics.requests.serverErrors ?? 0)) / metrics.requests.total * 100)
-                : 0;
+            contextText += `\n## Current System Metrics\n`;
+            contextText += `- Total requests: ${metrics.requests.total}\n`;
+            contextText += `- Active requests: ${metrics.requests.active}\n`;
+            contextText += `- Error rate: ${errorRate.toFixed(2)}%\n`;
+            contextText += `- Average latency: ${metrics.latency.average.toFixed(0)}ms\n`;
+            contextText += `- Max latency: ${metrics.latency.max.toFixed(0)}ms\n`;
 
-              contextText += `\n## Current System Metrics\n`;
-              contextText += `- Total requests: ${metrics.requests?.total ?? 0}\n`;
-              contextText += `- Error rate: ${errorRate.toFixed(2)}%\n`;
-              contextText += `- P50 latency: ${metrics.latency?.p50?.toFixed(0) ?? 'N/A'}ms\n`;
-              contextText += `- P95 latency: ${metrics.latency?.p95?.toFixed(0) ?? 'N/A'}ms\n`;
-              contextText += `- P99 latency: ${metrics.latency?.p99?.toFixed(0) ?? 'N/A'}ms\n`;
+            if (metrics.perPlugin.length > 0) {
+              contextText += `\n### Per-Plugin Metrics\n`;
+              const pluginsToShow = contextConfig.plugins.length > 0
+                ? metrics.perPlugin.filter(plugin => plugin.pluginId && contextConfig.plugins.includes(plugin.pluginId))
+                : metrics.perPlugin.slice(0, 10);
 
-              // Per-plugin metrics
-              if (metrics.perPlugin?.length > 0) {
-                contextText += `\n### Per-Plugin Metrics\n`;
-                const pluginsToShow = contextConfig.plugins.length > 0
-                  ? metrics.perPlugin.filter((p: any) => contextConfig.plugins.includes(p.pluginId))
-                  : metrics.perPlugin.slice(0, 10);
-
-                for (const plugin of pluginsToShow) {
-                  const pluginErrorRate = plugin.requests
-                    ? ((plugin.errors ?? 0) / plugin.requests * 100).toFixed(2)
-                    : '0.00';
-                  contextText += `- ${plugin.pluginId}: ${plugin.requests ?? 0} requests, ${pluginErrorRate}% errors, ${plugin.latency?.average?.toFixed(0) ?? 'N/A'}ms avg latency\n`;
-                }
+              for (const plugin of pluginsToShow) {
+                const totalRequests = plugin.total ?? 0;
+                const errorCount = Object.entries(plugin.statuses ?? {})
+                  .filter(([statusGroup]) => statusGroup.startsWith('4') || statusGroup.startsWith('5'))
+                  .reduce((sum, [, count]) => sum + count, 0);
+                const pluginErrorRate = totalRequests > 0
+                  ? (errorCount / totalRequests * 100).toFixed(2)
+                  : '0.00';
+                const avgLatency = totalRequests > 0 ? plugin.totalDuration / totalRequests : 0;
+                contextText += `- ${plugin.pluginId ?? 'unknown'}: ${totalRequests} requests, ${pluginErrorRate}% errors, ${avgLatency.toFixed(0)}ms avg latency\n`;
               }
             }
           } catch (metricsError) {
-            fastify.log.warn({ err: metricsError }, 'Failed to fetch metrics for insights context');
+            fastify.log.warn({ err: metricsError }, 'Failed to build metrics context for insights');
           }
         }
 

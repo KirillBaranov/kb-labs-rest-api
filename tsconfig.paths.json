@@ -3,18 +3,6 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
-      "@kb-labs/cli-api": [
-        "../kb-labs-cli/packages/cli-api/src/index.ts"
-      ],
-      "@kb-labs/cli-api/*": [
-        "../kb-labs-cli/packages/cli-api/src/*"
-      ],
-      "@kb-labs/cli-core": [
-        "../kb-labs-cli/packages/cli-core/src/index.ts"
-      ],
-      "@kb-labs/cli-core/*": [
-        "../kb-labs-cli/packages/cli-core/src/*"
-      ],
       "@kb-labs/core-bundle": [
         "../kb-labs-core/packages/core-bundle/src/index.ts"
       ],
@@ -27,11 +15,23 @@
       "@kb-labs/core-config/*": [
         "../kb-labs-core/packages/core-config/src/*"
       ],
+      "@kb-labs/core-contracts": [
+        "../kb-labs-core/packages/core-contracts/src/index.ts"
+      ],
+      "@kb-labs/core-contracts/*": [
+        "../kb-labs-core/packages/core-contracts/src/*"
+      ],
       "@kb-labs/core-platform": [
         "../kb-labs-core/packages/core-platform/src/index.ts"
       ],
       "@kb-labs/core-platform/*": [
         "../kb-labs-core/packages/core-platform/src/*"
+      ],
+      "@kb-labs/core-registry": [
+        "../kb-labs-core/packages/core-registry/src/index.ts"
+      ],
+      "@kb-labs/core-registry/*": [
+        "../kb-labs-core/packages/core-registry/src/*"
       ],
       "@kb-labs/core-runtime": [
         "../kb-labs-core/packages/core-runtime/src/index.ts"
@@ -104,12 +104,6 @@
       ],
       "@kb-labs/shared-http/*": [
         "../kb-labs-shared/packages/shared-http/src/*"
-      ],
-      "@kb-labs/studio-contracts": [
-        "../kb-labs-studio/packages/studio-contracts/src/index.ts"
-      ],
-      "@kb-labs/studio-contracts/*": [
-        "../kb-labs-studio/packages/studio-contracts/src/*"
       ],
       "@kb-labs/workflow-constants": [
         "../kb-labs-workflow/packages/workflow-constants/src/index.ts"

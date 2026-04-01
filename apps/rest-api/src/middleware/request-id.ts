@@ -6,6 +6,7 @@
 import type { FastifyInstance } from 'fastify';
 import { ulid } from 'ulid';
 import { platform } from '@kb-labs/core-runtime';
+import { createCorrelatedLogger } from '@kb-labs/shared-http';
 
 /**
  * Register request ID middleware
@@ -20,13 +21,16 @@ export function registerRequestIdMiddleware(server: FastifyInstance): void {
     reply.header('X-Trace-Id', traceId);
 
     // Store logger metadata on request for metrics middleware to use
-    (request as any).kbLogger = platform.logger.child({
+    (request as any).kbLogger = createCorrelatedLogger(platform.logger, {
+      serviceId: 'rest',
+      logsSource: 'rest',
       layer: 'rest',
       service: 'request',
-      reqId: requestId,
+      requestId,
       traceId,
       method: request.method,
       url: request.url,
+      operation: 'http.request',
     });
 
     // Log request received
@@ -35,4 +39,3 @@ export function registerRequestIdMiddleware(server: FastifyInstance): void {
     (request as any).kbLogger.info(`→ ${method} ${fullUrl}`);
   });
 }
-

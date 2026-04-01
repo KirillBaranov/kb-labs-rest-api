@@ -8,6 +8,7 @@ import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
 import type { IEntityRegistry } from '@kb-labs/core-registry';
 import { normalizeBasePath } from '../utils/path-helpers';
+import { restDomainOperationMetrics } from '../middleware/metrics.js';
 
 /**
  * Register cache management routes
@@ -37,11 +38,17 @@ export async function registerCacheRoutes(
       });
       // Force cache invalidation and refresh discovery
       // This will trigger re-discovery and clear stale cache
-      await registry.refresh();
+      await restDomainOperationMetrics.observeOperation('cache.invalidate', async () => {
+        await registry.refresh();
+      });
 
       // Get new state
-      const afterSnapshot = registry.snapshot();
-      const plugins = await registry.listPlugins();
+      const afterSnapshot = await restDomainOperationMetrics.observeOperation('plugin.registry.snapshot', async () =>
+        registry.snapshot(),
+      );
+      const plugins = await restDomainOperationMetrics.observeOperation('plugin.registry.list', async () =>
+        registry.listPlugins(),
+      );
 
       const elapsed = Date.now() - start;
 

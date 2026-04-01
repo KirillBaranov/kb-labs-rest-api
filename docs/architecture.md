@@ -40,24 +40,35 @@ HTTP request
 
 ## Shared Endpoints
 
-- `GET /health` — process health snapshot (`kb.health/1`)
-- `GET /ready` — readiness probe described for orchestration
+- `GET /health` — public service health snapshot (`kb.health/1`), cheap and human-readable
+- `GET /ready` — readiness gate (`kb.ready/1`) for startup/orchestration decisions
+- `GET /observability/describe` — versioned observability contract descriptor
+- `GET /observability/health` — structured runtime health for collectors, Studio, and agents
 - `GET /openapi.json` — aggregated OpenAPI document
 - `GET /openapi/:pluginId` — per-plugin OpenAPI document
 - `GET /api/v1/plugins/registry` — plugin manifest registry for Studio
-- `GET /api/v1/metrics` and `GET /api/v1/metrics/json` — Prometheus and JSON metrics
+- `GET /api/v1/metrics` — canonical Prometheus metrics snapshot
 
 ## Metrics & Observability
 
 Metrics are collected by middleware and include:
 
+- canonical runtime gauges: CPU, RSS, heap used, event loop lag, active operations, service health
 - total requests, per-method, per-status counters
 - latency totals with average, min, max, plus per-route budgets (when manifests define timeouts)
 - error counters keyed by error code
+- canonical service operation counters and duration histograms (`service_operation_*`)
 - per-plugin aggregates (`kb_plugin_request_*`) tracking success/error ratios and latency spikes
 - uptime information (process start time, last request timestamp)
 
-Both Prometheus (`/api/v1/metrics`) and JSON (`/api/v1/metrics/json`) formats are available. Logs use Pino with request IDs for correlation.
+The endpoint roles are intentionally split:
+
+- `/health` answers “is the service alive and what is its current high-level state?”
+- `/ready` answers “can this instance safely receive traffic right now?”
+- `/observability/describe` answers “what observability contract and capabilities does this service expose?”
+- `/observability/health` answers “what runtime/load context does the service expose for diagnostics?”
+
+`/api/v1/metrics` is the single canonical metrics surface. Logs use Pino with request IDs for correlation.
 
 ## Configuration
 
@@ -81,4 +92,3 @@ Environment variables with `KB_REST_*` prefixes map onto these fields (see `READ
 - The CLI registry publishes change events; the server logs summary counts when plugins are added/removed.
 - Graceful shutdown disposes the CLI API and stops the Fastify server.
 - No background workers run—the cleanup task and queue executor were removed with the legacy services.
-

@@ -2,32 +2,25 @@
  * @module @kb-labs/rest-api-core/studio-registry
  *
  * Transforms ManifestV3 studio sections into StudioRegistryV2 format.
- * REST API uses this to provide pre-computed registry data to Studio frontend.
  *
- * remoteEntryUrl is computed from the plugin's resolvedPath in marketplace.lock:
- *   resolvedPath: ./node_modules/@kb-labs/commit
- *   → remoteEntryUrl: /plugins/@kb-labs/commit/widgets/remoteEntry.js
+ * Each plugin entry includes:
+ * - remoteEntryUrl: browser-facing URL (proxied through gateway)
+ * - widgetBundleDir: absolute filesystem path to dist/widgets/ (used by gateway to serve files)
  */
 
+import { resolve, join } from 'node:path';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { StudioRegistryV2, StudioPluginEntryV2 } from '@kb-labs/rest-api-contracts';
 
 /**
- * Compute remoteEntry URL from the plugin's resolved install path.
- * Gateway serves static files from node_modules.
- */
-function computeRemoteEntryUrl(pluginId: string, resolvedPath?: string): string {
-  // Default: derive from plugin ID
-  // e.g. @kb-labs/commit → /plugins/@kb-labs/commit/widgets/remoteEntry.js
-  return `/plugins/${pluginId}/widgets/remoteEntry.js`;
-}
-
-/**
  * Convert a single ManifestV3 with studio V2 config to a registry entry.
+ *
+ * @param manifest - Plugin manifest with studio V2 config
+ * @param pluginRoot - Absolute path to the plugin package root (where package.json lives)
  */
 export function manifestToRegistryEntry(
   manifest: ManifestV3,
-  resolvedPath?: string,
+  pluginRoot: string,
 ): StudioPluginEntryV2 | null {
   const studio = manifest.studio;
   if (!studio || studio.version !== 2) {
@@ -39,7 +32,8 @@ export function manifestToRegistryEntry(
     displayName: manifest.display?.name,
     pluginVersion: manifest.version,
     remoteName: studio.remoteName,
-    remoteEntryUrl: computeRemoteEntryUrl(manifest.id, resolvedPath),
+    remoteEntryUrl: `/plugins/${manifest.id}/widgets/remoteEntry.js`,
+    widgetBundleDir: join(pluginRoot, 'dist', 'widgets'),
     pages: studio.pages ?? [],
     menus: studio.menus ?? [],
   };
@@ -49,12 +43,12 @@ export function manifestToRegistryEntry(
  * Combine multiple manifests into a StudioRegistryV2.
  */
 export function combineManifestsToRegistry(
-  manifests: Array<{ manifest: ManifestV3; resolvedPath?: string }>,
+  manifests: Array<{ manifest: ManifestV3; pluginRoot: string }>,
 ): StudioRegistryV2 {
   const plugins: StudioPluginEntryV2[] = [];
 
-  for (const { manifest, resolvedPath } of manifests) {
-    const entry = manifestToRegistryEntry(manifest, resolvedPath);
+  for (const { manifest, pluginRoot } of manifests) {
+    const entry = manifestToRegistryEntry(manifest, pluginRoot);
     if (entry) {
       plugins.push(entry);
     }

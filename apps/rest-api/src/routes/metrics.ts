@@ -5,57 +5,12 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import { metricsCollector } from '../middleware/metrics.js';
+import { metricsCollector, restDomainOperationMetrics } from '../middleware/metrics.js';
 import { getHeaderDebugEntries } from '../diagnostics/header-debug';
 import { getPrometheusMetrics, updateProcessUptime } from '../middleware/prom-metrics';
 
 function formatNumber(value: number, fractionDigits = 2): string {
   return Number.isFinite(value) ? value.toFixed(fractionDigits) : '0';
-}
-
-/**
- * Calculate percentiles from histogram buckets using linear interpolation
- */
-function calculatePercentilesFromHistogram(
-  sum: number,
-  count: number,
-  buckets: Array<{ le: string; count: number }>
-): { p50: number; p95: number; p99: number } {
-  if (count === 0) {
-    return { p50: 0, p95: 0, p99: 0 };
-  }
-
-  // Sort buckets by le (upper bound)
-  const sortedBuckets = buckets
-    .map(b => ({ le: b.le === '+Inf' ? Infinity : parseFloat(b.le), count: b.count }))
-    .sort((a, b) => a.le - b.le);
-
-  const calculatePercentile = (percentile: number): number => {
-    const targetCount = count * percentile;
-    let prevCount = 0;
-    let prevBound = 0;
-
-    for (const bucket of sortedBuckets) {
-      if (bucket.count >= targetCount) {
-        // Linear interpolation
-        if (bucket.count === prevCount) {
-          return bucket.le;
-        }
-        const ratio = (targetCount - prevCount) / (bucket.count - prevCount);
-        return prevBound + ratio * (bucket.le - prevBound);
-      }
-      prevCount = bucket.count;
-      prevBound = bucket.le;
-    }
-
-    return sum / count; // Fallback to average
-  };
-
-  return {
-    p50: calculatePercentile(0.50),
-    p95: calculatePercentile(0.95),
-    p99: calculatePercentile(0.99),
-  };
 }
 
 /**
@@ -104,6 +59,8 @@ export function registerMetricsRoutes(
       customLines.push(`kb_plugins_mount_failed ${pluginSnapshot.failed}`);
       customLines.push(`kb_plugins_mount_elapsed_ms ${formatNumber(pluginSnapshot.elapsedMs)}`);
     }
+
+    customLines.push(...restDomainOperationMetrics.getMetricLines());
 
     // Redis metrics (not in prom-client)
     customLines.push(`# HELP kb_redis_status_updates_total Redis status updates observed`);
@@ -160,74 +117,4 @@ export function registerMetricsRoutes(
       entries: getHeaderDebugEntries(limit),
     };
   });
-
-  // GET /metrics/json (JSON format with real p50/p95/p99)
-  server.get(`${basePath}/metrics/json`, async (_request, reply) => {
-    const metrics = metricsCollector.getMetrics();
-    const pluginSnapshot = metricsCollector.getLastPluginMountSnapshot();
-
-    // Get prom-client metrics to extract histogram data
-    const promMetricsText = await getPrometheusMetrics();
-
-    // Parse histogram buckets for http_request_duration_ms
-    const bucketMap = new Map<string, number>(); // le -> cumulative count
-    let totalSum = 0;
-    let totalCount = 0;
-
-    for (const line of promMetricsText.split('\n')) {
-      // Parse bucket lines: http_request_duration_ms_bucket{...} <count>
-      const bucketMatch = line.match(/^http_request_duration_ms_bucket\{[^}]*le="([^"]+)"[^}]*\}\s+(\d+(?:\.\d+)?)/);
-      if (bucketMatch && bucketMatch[1] && bucketMatch[2]) {
-        const le = bucketMatch[1];
-        const count = parseFloat(bucketMatch[2]);
-        // Aggregate counts for same le across different labels
-        bucketMap.set(le, (bucketMap.get(le) || 0) + count);
-      }
-
-      // Parse sum: http_request_duration_ms_sum{...} <sum>
-      const sumMatch = line.match(/^http_request_duration_ms_sum\{[^}]*\}\s+(\d+(?:\.\d+)?)/);
-      if (sumMatch) {
-        totalSum += parseFloat(sumMatch[1]!);
-      }
-
-      // Parse count: http_request_duration_ms_count{...} <count>
-      const countMatch = line.match(/^http_request_duration_ms_count\{[^}]*\}\s+(\d+(?:\.\d+)?)/);
-      if (countMatch) {
-        totalCount += parseFloat(countMatch[1]!);
-      }
-    }
-
-    // Convert map to array for percentile calculation
-    const histogramBuckets = Array.from(bucketMap.entries()).map(([le, count]) => ({ le, count }));
-
-    // Calculate percentiles from aggregated histogram data
-    const percentiles = calculatePercentilesFromHistogram(totalSum, totalCount, histogramBuckets);
-
-    // Return data with enhanced latency metrics
-    return {
-      requests: metrics.requests,
-      latency: {
-        ...metrics.latency,
-        p50: percentiles.p50,
-        p95: percentiles.p95,
-        p99: percentiles.p99,
-      },
-      perPlugin: metrics.perPlugin,
-      perTenant: metrics.perTenant,
-      errors: metrics.errors,
-      timestamps: metrics.timestamps,
-      headers: metrics.headers,
-      redis: metrics.redis,
-      pluginMounts: pluginSnapshot ?? null,
-      uptime: {
-        seconds: (Date.now() - metrics.timestamps.startTime) / 1000,
-        startTime: new Date(metrics.timestamps.startTime).toISOString(),
-        lastRequest: metrics.timestamps.lastRequest
-          ? new Date(metrics.timestamps.lastRequest).toISOString()
-          : null,
-      },
-    };
-  });
 }
-
-

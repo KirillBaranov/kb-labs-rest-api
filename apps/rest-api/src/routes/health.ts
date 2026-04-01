@@ -11,6 +11,11 @@ import type { ReadinessState } from './readiness';
 import { isReady, resolveReadinessReason } from './readiness';
 import type { PluginsMetricsSnapshot } from '../middleware/metrics.js';
 import { metricsCollector } from '../middleware/metrics.js';
+import { updateServiceHealthStatus } from '../middleware/prom-metrics.js';
+import {
+  buildRestObservabilityDescribe,
+  buildRestObservabilityHealth,
+} from '../observability/service-contract.js';
 
 // Version is injected at build time by tsup define
 declare const __REST_API_VERSION__: string;
@@ -40,6 +45,8 @@ export async function registerHealthRoutes(
   const basePath = normalizeBasePath(config.basePath);
   const healthPaths = resolvePaths(basePath, '/health');
   const readyPaths = resolvePaths(basePath, '/ready');
+  const observabilityDescribePaths = resolvePaths(basePath, '/observability/describe');
+  const observabilityHealthPaths = resolvePaths(basePath, '/observability/health');
 
   for (const path of healthPaths) {
     fastify.get(path, async (_request, reply) => {
@@ -54,6 +61,9 @@ export async function registerHealthRoutes(
         const reason = resolveReadinessReason(readiness);
         const pluginsMetrics = metricsCollector.getLastPluginMountSnapshot();
         const response = augmentSnapshot(baseSnapshot, readiness, pluginsMetrics);
+        updateServiceHealthStatus(
+          response.status === 'healthy' ? 'healthy' : response.status === 'degraded' ? 'degraded' : 'unhealthy',
+        );
         eventHub?.publish({
           type: 'health',
           status: response.status,
@@ -67,6 +77,7 @@ export async function registerHealthRoutes(
         return reply.send(response);
       } catch (error) {
         const fallback = buildFallbackSnapshot(error, readiness);
+        updateServiceHealthStatus('degraded');
         const ready = isReady(readiness);
         const reason = resolveReadinessReason(readiness);
         eventHub?.publish({
@@ -94,6 +105,7 @@ export async function registerHealthRoutes(
 
       const response = buildReadinessResponse(readiness);
       const statusCode = response.ready ? 200 : 503;
+      updateServiceHealthStatus(response.ready ? 'healthy' : 'degraded');
 
       eventHub?.publish({
         type: 'health',
@@ -113,6 +125,28 @@ export async function registerHealthRoutes(
       });
 
       return reply.code(statusCode).send(response);
+    });
+  }
+
+  for (const path of observabilityDescribePaths) {
+    fastify.get(path, async () => buildRestObservabilityDescribe(basePath));
+  }
+
+  for (const path of observabilityHealthPaths) {
+    fastify.get(path, async () => {
+      try {
+        const baseSnapshot = await getBaseSnapshot(registry);
+        const pluginsMetrics = metricsCollector.getLastPluginMountSnapshot();
+        const augmented = augmentSnapshot(baseSnapshot, readiness, pluginsMetrics);
+        updateServiceHealthStatus(
+          augmented.status === 'healthy' ? 'healthy' : augmented.status === 'degraded' ? 'degraded' : 'unhealthy',
+        );
+        return buildRestObservabilityHealth(basePath, augmented, readiness, metricsCollector.getMetrics());
+      } catch (error) {
+        const fallback = buildFallbackSnapshot(error, readiness);
+        updateServiceHealthStatus('degraded');
+        return buildRestObservabilityHealth(basePath, fallback, readiness, metricsCollector.getMetrics());
+      }
     });
   }
 }
@@ -288,8 +322,8 @@ function buildReadinessResponse(readiness: ReadinessState) {
     status,
     reason,
     components: {
-      registry: {
-        initialized: readiness.registryInitialized,
+      cliApi: {
+        initialized: readiness.cliApiInitialized,
       },
       registry: {
         loaded: readiness.registryLoaded,

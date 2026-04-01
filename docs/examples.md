@@ -62,6 +62,61 @@ curl -i http://localhost:3001/ready
 { "ready": true }
 ```
 
+### Observability Descriptor
+
+```bash
+curl http://localhost:3001/api/v1/observability/describe
+```
+
+Response (`kb.observability/1`):
+```json
+{
+  "schema": "kb.observability/1",
+  "contractVersion": "1.0",
+  "serviceId": "rest",
+  "instanceId": "laptop.local:12345",
+  "serviceType": "http-api",
+  "metricsEndpoint": "/api/v1/metrics",
+  "healthEndpoint": "/api/v1/observability/health",
+  "logsSource": "rest",
+  "capabilities": [
+    "httpMetrics",
+    "eventLoopMetrics",
+    "operationMetrics",
+    "logCorrelation"
+  ]
+}
+```
+
+### Observability Health
+
+```bash
+curl http://localhost:3001/api/v1/observability/health
+```
+
+Response (`kb.observability/1`):
+```json
+{
+  "schema": "kb.observability/1",
+  "contractVersion": "1.0",
+  "serviceId": "rest",
+  "status": "healthy",
+  "state": "active",
+  "snapshot": {
+    "cpuPercent": 14.2,
+    "rssBytes": 204472320,
+    "heapUsedBytes": 68521984,
+    "eventLoopLagMs": 3.1,
+    "activeOperations": 1
+  },
+  "checks": [
+    { "id": "registry", "status": "ok" },
+    { "id": "plugin-routes", "status": "ok" },
+    { "id": "redis", "status": "ok" }
+  ]
+}
+```
+
 ### Create Audit Run
 
 ```bash
@@ -295,62 +350,11 @@ Response:
 ### Metrics
 
 ```bash
-# Prometheus format
+# Canonical Prometheus format
 curl http://localhost:3001/api/v1/metrics
-
-# JSON format
-curl http://localhost:3001/api/v1/metrics/json
 ```
 
-Response (JSON):
-```json
-{
-  "ok": true,
-  "data": {
-    "requests": {
-      "total": 1234,
-      "byMethod": {
-        "GET": 1000,
-        "POST": 234
-      },
-      "byStatus": {
-        "2xx": 1100,
-        "4xx": 100,
-        "5xx": 34
-      },
-      "byRoute": {
-        "/health": 500,
-        "/audit/runs": 234
-      }
-    },
-    "latency": {
-      "total": 50000,
-      "count": 1234,
-      "min": 2,
-      "max": 5000,
-      "average": 40.5
-    },
-    "errors": {
-      "total": 134,
-      "byCode": {
-        "E_VALIDATION": 100,
-        "E_TOOL_AUDIT": 34
-      }
-    },
-    "jobs": {
-      "queued": 5,
-      "running": 2,
-      "completed": 1000,
-      "failed": 50
-    }
-  },
-  "meta": {
-    "requestId": "01K92CXQTGV3BV7A884XW1JM2W",
-    "durationMs": 5,
-    "apiVersion": "1.0.0"
-  }
-}
-```
+Use `/api/v1/observability/health` for structured runtime diagnostics and `/api/v1/metrics` as the single canonical metrics surface.
 
 ### Job Retry Events (SSE)
 
@@ -367,4 +371,3 @@ data: {"type":"job.retry","jobId":"...","timestamp":"...","data":{"retryCount":1
 data: {"type":"job.started","jobId":"...","timestamp":"..."}
 data: {"type":"job.finished","jobId":"...","timestamp":"...","data":{"status":"completed"}}
 ```
-

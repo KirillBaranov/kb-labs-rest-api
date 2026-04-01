@@ -9,6 +9,10 @@
 import { platform } from '@kb-labs/core-runtime';
 import * as os from 'node:os';
 import * as process from 'node:process';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
+import { updateRuntimeObservabilityMetrics } from '../middleware/prom-metrics.js';
+
+let latestSystemMetricsSnapshot: SystemMetrics | null = null;
 
 /**
  * System metrics data structure
@@ -50,6 +54,8 @@ export interface SystemMetrics {
 
   /** Process uptime (seconds) */
   uptime: number;
+  eventLoopLagMs: number;
+  activeOperations: number;
 
   /** System load average (1, 5, 15 minutes) */
   loadAvg: [number, number, number];
@@ -61,6 +67,10 @@ export interface SystemMetrics {
   freeMemory: number;
 }
 
+function toFiniteNumber(value: number): number {
+  return Number.isFinite(value) ? value : 0;
+}
+
 /**
  * System metrics collector
  * Periodically collects system metrics and writes to platform.cache
@@ -70,9 +80,14 @@ export class SystemMetricsCollector {
   private instanceId: string;
   private lastCpuUsage = process.cpuUsage();
   private lastCpuTime = Date.now();
+  private eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+  private latestMetrics: SystemMetrics | null = null;
 
-  constructor() {
-    this.instanceId = os.hostname();
+  constructor(
+    private readonly serviceId: string = 'rest',
+    private readonly getActiveOperations: () => number = () => 0,
+  ) {
+    this.instanceId = `${os.hostname()}:${process.pid}`;
   }
 
   /**
@@ -102,6 +117,10 @@ export class SystemMetricsCollector {
   private collectMetrics(): SystemMetrics {
     const memoryUsage = process.memoryUsage();
     const totalMemory = os.totalmem();
+    const heapPercentageRaw =
+      memoryUsage.heapTotal > 0 ? (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100 : 0;
+    const eventLoopLagMs = toFiniteNumber(Number((this.eventLoopDelay.mean / 1_000_000).toFixed(2)));
+    const cpuPercentage = toFiniteNumber(this.calculateCpuPercentage());
 
     return {
       instanceId: this.instanceId,
@@ -109,7 +128,7 @@ export class SystemMetricsCollector {
       cpu: {
         user: this.lastCpuUsage.user,
         system: this.lastCpuUsage.system,
-        percentage: this.calculateCpuPercentage(),
+        percentage: cpuPercentage,
       },
       memory: {
         rss: memoryUsage.rss,
@@ -117,10 +136,12 @@ export class SystemMetricsCollector {
         heapUsed: memoryUsage.heapUsed,
         external: memoryUsage.external,
         arrayBuffers: memoryUsage.arrayBuffers,
-        rssPercentage: (memoryUsage.rss / totalMemory) * 100,
-        heapPercentage: (memoryUsage.heapUsed / memoryUsage.heapTotal) * 100,
+        rssPercentage: toFiniteNumber((memoryUsage.rss / totalMemory) * 100),
+        heapPercentage: toFiniteNumber(heapPercentageRaw),
       },
       uptime: process.uptime(),
+      eventLoopLagMs,
+      activeOperations: this.getActiveOperations(),
       loadAvg: os.loadavg() as [number, number, number],
       totalMemory,
       freeMemory: os.freemem(),
@@ -139,10 +160,13 @@ export class SystemMetricsCollector {
     }
 
     platform.logger.info('Starting system metrics collector', {
+      serviceId: this.serviceId,
       instanceId: this.instanceId,
       intervalMs,
       ttlMs,
     });
+
+    this.eventLoopDelay.enable();
 
     // Collect immediately on start
     await this.collect(ttlMs);
@@ -159,6 +183,8 @@ export class SystemMetricsCollector {
   private async collect(ttlMs: number): Promise<void> {
     try {
       const metrics = this.collectMetrics();
+      this.latestMetrics = metrics;
+      latestSystemMetricsSnapshot = metrics;
 
       // Write to platform.cache with TTL
       // Key pattern: system-metrics:{instanceId}
@@ -168,15 +194,36 @@ export class SystemMetricsCollector {
         ttlMs
       );
 
+      updateRuntimeObservabilityMetrics({
+        cpuPercent: metrics.cpu.percentage,
+        rssBytes: metrics.memory.rss,
+        heapUsedBytes: metrics.memory.heapUsed,
+        eventLoopLagMs: metrics.eventLoopLagMs,
+        activeOperations: metrics.activeOperations,
+      });
+
       platform.logger.debug('System metrics collected', {
+        serviceId: this.serviceId,
         instanceId: this.instanceId,
         cpu: metrics.cpu.percentage.toFixed(1) + '%',
         memory: metrics.memory.rssPercentage.toFixed(1) + '%',
+        eventLoopLagMs: metrics.eventLoopLagMs,
+        activeOperations: metrics.activeOperations,
         uptime: Math.floor(metrics.uptime) + 's',
       });
+
+      this.eventLoopDelay.reset();
     } catch (error) {
       platform.logger.error('Failed to collect system metrics', error instanceof Error ? error : new Error(String(error)));
     }
+  }
+
+  getInstanceId(): string {
+    return this.instanceId;
+  }
+
+  getLatestMetrics(): SystemMetrics | null {
+    return this.latestMetrics;
   }
 
   /**
@@ -188,5 +235,10 @@ export class SystemMetricsCollector {
       this.intervalId = null;
       platform.logger.info('System metrics collector stopped');
     }
+    this.eventLoopDelay.disable();
   }
+}
+
+export function getLatestSystemMetrics(): SystemMetrics | null {
+  return latestSystemMetricsSnapshot;
 }

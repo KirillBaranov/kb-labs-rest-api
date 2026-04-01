@@ -9,6 +9,7 @@ import type { PlatformConfigResponse, PlatformConfigPayload } from '@kb-labs/res
 import { normalizeBasePath, resolvePaths } from '../utils/path-helpers';
 import { readKbConfig } from '@kb-labs/core-config';
 import { platform } from '@kb-labs/core-runtime';
+import { restDomainOperationMetrics } from '../middleware/metrics.js';
 
 /**
  * Sensitive keys to redact from adapterOptions
@@ -104,7 +105,10 @@ export async function registerPlatformRoutes(
   for (const path of configPaths) {
     fastify.get(path, async (_request, reply) => {
       try {
-        const { adapters, adapterOptions, execution } = await loadPlatformConfig(repoRoot);
+        const { adapters, adapterOptions, execution } = await restDomainOperationMetrics.observeOperation(
+          'platform.config.get',
+          () => loadPlatformConfig(repoRoot),
+        );
 
         const redacted: string[] = [];
         const sanitizedOptions = redactSensitiveData(adapterOptions as Record<string, any>, redacted);

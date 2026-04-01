@@ -8,7 +8,7 @@ export interface ReadyComponents {
     stale: boolean;
   };
   plugins: {
-    mounted: number;
+    mounted: boolean;
     inProgress: boolean;
     routeCount: number;
     errors: number;
@@ -39,4 +39,3 @@ export type NotReadyResponse = ReadyResponseBase & {
   ready: false;
   status: 'initializing' | 'degraded';
 };
-

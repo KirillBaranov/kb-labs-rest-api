@@ -1,10 +1,14 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyInstance } from 'fastify';
 import type { RedisStatus } from '@kb-labs/core-registry';
+import { OperationMetricsTracker } from '@kb-labs/shared-http';
 import {
   httpRequestDuration,
   httpRequestsTotal,
   httpErrorsTotal,
+  serviceActiveOperations,
+  serviceOperationDuration,
+  serviceOperationTotal,
   tenantRequestsTotal,
   tenantErrorsTotal,
   tenantRequestDuration,
@@ -39,6 +43,7 @@ interface RedisMetrics {
 interface Metrics {
   requests: {
     total: number;
+    active: number;
     byMethod: Record<string, number>;
     byStatus: Record<string, number>;
     byRoute: Record<string, number>;
@@ -171,7 +176,7 @@ class PluginsMetricsCollector {
   }
 }
 
-interface MetricsSnapshot {
+export interface MetricsSnapshot {
   requests: Metrics['requests'] & {
     success: number;
     clientErrors: number;
@@ -248,6 +253,7 @@ class MetricsCollector {
     return {
       requests: {
         total: 0,
+        active: 0,
         byMethod: {},
         byStatus: {},
         byRoute: {},
@@ -336,6 +342,20 @@ class MetricsCollector {
     this.metrics.latency.max = Math.max(this.metrics.latency.max, durationMs);
     this.metrics.latency.average = this.metrics.latency.total / this.metrics.latency.count;
     this.metrics.timestamps.lastRequest = Date.now();
+  }
+
+  incrementActiveRequests(): number {
+    this.metrics.requests.active += 1;
+    return this.metrics.requests.active;
+  }
+
+  decrementActiveRequests(): number {
+    this.metrics.requests.active = Math.max(0, this.metrics.requests.active - 1);
+    return this.metrics.requests.active;
+  }
+
+  getActiveRequests(): number {
+    return this.metrics.requests.active;
   }
 
   recordError(errorCode: string): void {
@@ -605,12 +625,13 @@ class MetricsCollector {
 }
 
 export const metricsCollector = new MetricsCollector();
+export const restDomainOperationMetrics = new OperationMetricsTracker();
 
 /**
  * Sampling strategy for high-frequency endpoints to prevent analytics overload.
  *
- * - /metrics, /metrics/json: 1:100 (Prometheus scraping happens every few seconds)
- * - /health, /ready: 1:10 (Health checks from load balancers)
+ * - /metrics: 1:100 (Prometheus scraping happens every few seconds)
+ * - /health, /ready, /observability/health, /observability/describe: 1:10
  * - All other endpoints: 1:1 (track everything)
  *
  * Uses deterministic sampling based on request counter to ensure even distribution.
@@ -620,12 +641,17 @@ function shouldSampleRequest(route: string): boolean {
   requestCounter = (requestCounter + 1) % 100;
 
   // High-frequency metrics endpoints (Prometheus scraping) - sample 1:100
-  if (route === '/api/v1/metrics' || route === '/api/v1/metrics/json') {
+  if (route === '/api/v1/metrics') {
     return requestCounter === 0; // Only track every 100th request
   }
 
-  // Medium-frequency health checks - sample 1:10
-  if (route === '/api/v1/health' || route === '/api/v1/ready') {
+  // Medium-frequency health and observability probes - sample 1:10
+  if (
+    route === '/api/v1/health' ||
+    route === '/api/v1/ready' ||
+    route === '/api/v1/observability/health' ||
+    route === '/api/v1/observability/describe'
+  ) {
     return requestCounter % 10 === 0; // Only track every 10th request
   }
 
@@ -636,6 +662,7 @@ function shouldSampleRequest(route: string): boolean {
 export function registerMetricsMiddleware(server: FastifyInstance): void {
   server.addHook('onRequest', (request, _reply, done) => {
     request.kbMetricsStart = performance.now();
+    serviceActiveOperations.set(metricsCollector.incrementActiveRequests());
     done();
   });
 
@@ -667,6 +694,7 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     // Record to prom-client metrics
     const normalizedRoute = normalizeRoute(routePath ?? request.url) ?? 'unknown';
     const statusCode = String(reply.statusCode);
+    const operation = `http.${method} ${normalizedRoute}`;
 
     // Record request duration histogram (automatically calculates p50/p95/p99)
     httpRequestDuration.observe(
@@ -699,6 +727,18 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
       tenantErrorsTotal.inc({ tenant: tenantId });
     }
 
+    serviceOperationTotal.inc({
+      operation,
+      status: reply.statusCode >= 400 ? 'error' : 'ok',
+    });
+    serviceOperationDuration.observe(
+      {
+        operation,
+        status: reply.statusCode >= 400 ? 'error' : 'ok',
+      },
+      duration,
+    );
+
     // Record tenant metrics
     tenantRequestsTotal.inc({ tenant: tenantId });
     tenantRequestDuration.observe({ tenant: tenantId }, duration);
@@ -709,7 +749,7 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
     if (method !== 'OPTIONS') {
       const { analytics } = platform;
       if (analytics) {
-        // Sample high-frequency health check endpoints (1:100 for metrics, 1:10 for health/ready)
+        // Sample high-frequency probe endpoints (1:100 for metrics, 1:10 for health/ready/observability)
         // This prevents overwhelming analytics with 142k+ ping-pong events
         const shouldSample = shouldSampleRequest(normalizedRoute);
 
@@ -731,6 +771,7 @@ export function registerMetricsMiddleware(server: FastifyInstance): void {
       }
     }
 
+    serviceActiveOperations.set(metricsCollector.decrementActiveRequests());
     done();
   });
 }
@@ -763,4 +804,3 @@ function updateLatencyHistogram(
   const statusKey = `${statusCode}`;
   stats.byStatus[statusKey] = (stats.byStatus[statusKey] || 0) + 1;
 }
-

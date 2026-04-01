@@ -22,6 +22,7 @@
     "@fastify/swagger-ui": "^5.2.0",
     "@fastify/websocket": "^11.0.1",
     "@kb-labs/shared-http": "link:../../../kb-labs-shared/packages/shared-http",
+    "@kb-labs/core-contracts": "link:../../../kb-labs-core/packages/core-contracts",
     "fastify-type-provider-zod": "^6.0.0",
     "@kb-labs/core-registry": "link:../../../kb-labs-core/packages/core-registry",
     "@kb-labs/core-config": "link:../../../kb-labs-core/packages/core-config",

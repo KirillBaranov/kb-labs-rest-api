@@ -63,7 +63,7 @@ export async function registerRoutes(
     initialSnapshot.plugins.length > 0 && !initialSnapshot.partial && !initialSnapshot.stale;
 
   const readiness: ReadinessState = {
-    registryInitialized: true,
+    cliApiInitialized: true,
     registryLoaded,
     registryPartial: initialSnapshot.partial,
     registryStale: initialSnapshot.stale,

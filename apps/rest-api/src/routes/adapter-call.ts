@@ -20,6 +20,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { z } from 'zod';
 import { platform } from '@kb-labs/core-runtime';
 import { AdapterNameSchema, type AdapterName } from '@kb-labs/gateway-contracts';
+import { restDomainOperationMetrics } from '../middleware/metrics.js';
 
 // ── Adapter Registry ──
 
@@ -195,7 +196,10 @@ export async function registerAdapterCallRoutes(
 
     // 4. Execute
     try {
-      const result = await entry.execute(args, context);
+      const operation = `adapter.call.${adapter}.${method}`;
+      const result = await restDomainOperationMetrics.observeOperation(operation, async () =>
+        entry.execute(args, context),
+      );
       const latencyMs = Date.now() - startMs;
 
       logger.info('Adapter call success', { requestId, adapter, method, hostId: context.hostId, latencyMs });

@@ -21,6 +21,8 @@ const routeLimits: Record<string, RouteRateLimit> = {
   // Health endpoints - higher limits
   '/health': { max: 100, timeWindow: '1 minute' },
   '/ready': { max: 60, timeWindow: '1 minute' },
+  '/observability/describe': { max: 60, timeWindow: '1 minute' },
+  '/observability/health': { max: 60, timeWindow: '1 minute' },
   // Info endpoints - moderate limits
   '/info': { max: 30, timeWindow: '1 minute' },
   '/info/capabilities': { max: 30, timeWindow: '1 minute' },
@@ -69,4 +71,3 @@ export function registerRouteRateLimiting(
     }
   });
 }
-

@@ -22,8 +22,10 @@ export interface StudioPluginEntryV2 {
   displayName?: string;
   pluginVersion?: string;
   remoteName: string;
-  /** Computed by registry endpoint from resolvedPath in marketplace.lock */
+  /** Browser URL for loading remoteEntry.js (relative, proxied through gateway) */
   remoteEntryUrl: string;
+  /** Absolute filesystem path to dist/widgets/ directory (server-side only, used by gateway) */
+  widgetBundleDir: string;
   pages: import('@kb-labs/plugin-contracts').StudioPageEntry[];
   menus: import('@kb-labs/plugin-contracts').StudioMenuEntry[];
 }
