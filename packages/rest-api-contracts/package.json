@@ -26,7 +26,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@kb-labs/studio-contracts": "link:../../../kb-labs-studio/packages/studio-contracts",
+    "@kb-labs/plugin-contracts": "link:../../../../infra/kb-labs-plugin/packages/plugin-contracts",
     "zod": "^4.0.0"
   },
   "devDependencies": {
