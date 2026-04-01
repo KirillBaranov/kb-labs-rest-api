@@ -68,6 +68,66 @@ describe('combineManifestsToRegistry', () => {
     expect(registry.plugins).toHaveLength(0);
   });
 
+  it('generates remoteEntryUrl matching gateway route pattern', () => {
+    const registry = combineManifestsToRegistry([
+      {
+        manifest: makeManifest({
+          id: '@kb-labs/commit',
+          studio: {
+            version: 2,
+            remoteName: 'commitPlugin',
+            pages: [{ id: 'c.o', title: 'C', route: '/p/commit', entry: './C' }],
+          },
+        }),
+        resolvedPath: './node_modules/@kb-labs/commit',
+      },
+    ]);
+
+    const entry = registry.plugins[0]!;
+    // Must match gateway route: GET /plugins/@scope/name/widgets/remoteEntry.js
+    expect(entry.remoteEntryUrl).toBe('/plugins/@kb-labs/commit/widgets/remoteEntry.js');
+    // Verify URL can be parsed by gateway route pattern /plugins/@:scope/:name/widgets/*
+    const match = entry.remoteEntryUrl.match(/^\/plugins\/@([^/]+)\/([^/]+)\/widgets\/(.+)$/);
+    expect(match).not.toBeNull();
+    expect(match![1]).toBe('kb-labs');
+    expect(match![2]).toBe('commit');
+    expect(match![3]).toBe('remoteEntry.js');
+  });
+
+  it('preserves all manifest fields in registry entry', () => {
+    const registry = combineManifestsToRegistry([{
+      manifest: makeManifest({
+        id: '@kb-labs/release-manager',
+        version: '3.0.0',
+        display: { name: 'Release Manager' },
+        studio: {
+          version: 2,
+          remoteName: 'releasePlugin',
+          pages: [
+            { id: 'release.dashboard', title: 'Dashboard', route: '/p/release', entry: './Dashboard', icon: 'RocketOutlined', order: 1, permissions: ['release:read'] },
+            { id: 'release.history', title: 'History', route: '/p/release/history', entry: './History', order: 2 },
+          ],
+          menus: [
+            { id: 'release', label: 'Release', icon: 'RocketOutlined', target: 'release.dashboard', order: 50 },
+            { id: 'release.history', label: 'History', target: 'release.history', parentId: 'release', order: 2 },
+          ],
+        },
+      }),
+    }]);
+
+    expect(registry.plugins).toHaveLength(1);
+    const p = registry.plugins[0]!;
+    expect(p.pluginId).toBe('@kb-labs/release-manager');
+    expect(p.pluginVersion).toBe('3.0.0');
+    expect(p.displayName).toBe('Release Manager');
+    expect(p.remoteName).toBe('releasePlugin');
+    expect(p.pages).toHaveLength(2);
+    expect(p.pages[0]!.permissions).toEqual(['release:read']);
+    expect(p.pages[1]!.route).toBe('/p/release/history');
+    expect(p.menus).toHaveLength(2);
+    expect(p.menus[1]!.parentId).toBe('release');
+  });
+
   it('combines multiple V2 manifests', () => {
     const registry = combineManifestsToRegistry([
       {
