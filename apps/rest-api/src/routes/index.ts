@@ -5,7 +5,13 @@
 
 import type { FastifyInstance } from 'fastify';
 import type { RestApiConfig } from '@kb-labs/rest-api-core';
-import type { IEntityRegistry, RedisStatus } from '@kb-labs/core-registry';
+import type { IEntityRegistry } from '@kb-labs/core-registry';
+
+type RedisStatus = {
+  enabled: boolean;
+  healthy: boolean;
+  roles: { publisher?: string | null; subscriber?: string | null; cache?: string | null };
+};
 import type { ISQLDatabase } from '@kb-labs/core-platform/adapters';
 import { platform } from '@kb-labs/core-runtime';
 import { EventHub } from '../events/hub';
@@ -52,7 +58,7 @@ export async function registerRoutes(
   registerRouteCollector(server);
 
   const initialSnapshot = registry.snapshot();
-  const initialRedisStatus = registry.getRedisStatus?.();
+  const initialRedisStatus = (registry as any).getRedisStatus?.();
   const initialRedisStates = initialRedisStatus?.roles ?? {
     publisher: null,
     subscriber: null,
@@ -112,7 +118,7 @@ export async function registerRoutes(
 
   const broadcastState = async (): Promise<void> => {
     const pluginsSnapshot = metricsCollector.getLastPluginMountSnapshot();
-    const redisStatus = registry.getRedisStatus?.();
+    const redisStatus = (registry as any).getRedisStatus?.();
     if (redisStatus) {
       handleRedisUpdate(redisStatus);
       readiness.redisEnabled = redisStatus.enabled;

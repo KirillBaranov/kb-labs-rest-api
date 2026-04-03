@@ -32,7 +32,6 @@ function buildSnapshot(
     uptimeSec: 42,
     version: {
       kbLabs: 'test-suite',
-      cli: 'test-cli',
       rest: 'test-rest',
     },
     registry: {

@@ -10,6 +10,7 @@ import { z } from 'zod';
 
 export const ErrorResponseSchema = z.object({
   ok: z.literal(false),
+  message: z.string().optional(),
   error: z.object({
     code: z.string(),
     message: z.string(),

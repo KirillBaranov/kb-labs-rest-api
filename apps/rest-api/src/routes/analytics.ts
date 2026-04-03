@@ -49,7 +49,8 @@ export async function registerAnalyticsRoutes(
         const analytics = platform.analytics;
 
         // Check if analytics adapter supports read methods
-        if (!analytics.getEvents) {
+        const getEvents = analytics.getEvents;
+        if (!getEvents) {
           fastify.log.debug('Analytics adapter does not implement getEvents()');
           return reply.code(501).send({
             ok: false,
@@ -89,7 +90,7 @@ export async function registerAnalyticsRoutes(
 
         const response: EventsResponse = await restDomainOperationMetrics.observeOperation(
           'analytics.events.query',
-          () => analytics.getEvents(query),
+          () => getEvents.call(analytics, query),
         );
 
         fastify.log.debug(
@@ -130,7 +131,8 @@ export async function registerAnalyticsRoutes(
       try {
         const analytics = platform.analytics;
 
-        if (!analytics.getStats) {
+        const getStats = analytics.getStats;
+        if (!getStats) {
           fastify.log.debug('Analytics adapter does not implement getStats()');
           return reply.code(501).send({
             ok: false,
@@ -149,7 +151,7 @@ export async function registerAnalyticsRoutes(
 
         if (!stats) {
           fastify.log.debug('Cache miss, fetching stats from adapter');
-          stats = await restDomainOperationMetrics.observeOperation('analytics.stats.get', () => analytics.getStats());
+          stats = await restDomainOperationMetrics.observeOperation('analytics.stats.get', () => getStats.call(analytics));
           await platform.cache.set(cacheKey, stats, 60 * 1000); // 60 second TTL
         } else {
           fastify.log.debug('Cache hit, returning cached stats');
@@ -192,7 +194,8 @@ export async function registerAnalyticsRoutes(
       try {
         const analytics = platform.analytics;
 
-        if (!analytics.getBufferStatus) {
+        const getBufferStatus = analytics.getBufferStatus;
+        if (!getBufferStatus) {
           fastify.log.debug('Analytics adapter does not implement getBufferStatus()');
           return reply.code(501).send({
             ok: false,
@@ -207,7 +210,7 @@ export async function registerAnalyticsRoutes(
 
         const status: BufferStatus | null = await restDomainOperationMetrics.observeOperation(
           'analytics.buffer.status',
-          () => analytics.getBufferStatus(),
+          () => getBufferStatus.call(analytics),
         );
 
         if (status === null) {
@@ -261,7 +264,8 @@ export async function registerAnalyticsRoutes(
       try {
         const analytics = platform.analytics;
 
-        if (!analytics.getDlqStatus) {
+        const getDlqStatus = analytics.getDlqStatus;
+        if (!getDlqStatus) {
           fastify.log.debug('Analytics adapter does not implement getDlqStatus()');
           return reply.code(501).send({
             ok: false,
@@ -276,7 +280,7 @@ export async function registerAnalyticsRoutes(
 
         const status: DlqStatus | null = await restDomainOperationMetrics.observeOperation(
           'analytics.dlq.status',
-          () => analytics.getDlqStatus(),
+          () => getDlqStatus.call(analytics),
         );
 
         if (status === null) {

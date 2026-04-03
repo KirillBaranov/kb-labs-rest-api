@@ -9,6 +9,7 @@ import {
 } from '../plugins';
 import type { ReadinessState } from '../readiness';
 import * as fs from 'node:fs/promises';
+import { platform } from '@kb-labs/core-runtime';
 
 // Mock dependencies
 vi.mock('@kb-labs/plugin-execution/http', () => ({
@@ -117,7 +118,17 @@ function createMockSnapshot(manifests: Array<{
   manifest: ManifestV3;
   pluginRoot: string;
   source?: string;
-}>): RegistrySnapshot {
+}>, options?: {
+  diagnostics?: Array<{
+    severity: 'error' | 'warning' | 'info' | 'debug';
+    code: string;
+    message: string;
+    pluginId?: string;
+    filePath?: string;
+    remediation?: string;
+    ts?: number;
+  }>;
+}): RegistrySnapshot {
   return {
     schema: 'kb.registry/1',
     rev: 1,
@@ -127,7 +138,7 @@ function createMockSnapshot(manifests: Array<{
     ttlMs: 60_000,
     partial: false,
     stale: false,
-    source: { cliVersion: 'test', cwd: process.cwd() },
+    source: { platformVersion: 'test', cwd: process.cwd() },
     corrupted: false,
     plugins: [],
     ts: Date.now(),
@@ -135,7 +146,18 @@ function createMockSnapshot(manifests: Array<{
       pluginId: entry.pluginId,
       manifest: entry.manifest,
       pluginRoot: entry.pluginRoot,
-      source: { kind: 'workspace' as const, path: entry.source ?? 'test' },
+      source: { kind: 'local' as const, path: entry.source ?? 'test' },
+    })),
+    diagnostics: options?.diagnostics?.map((diagnostic) => ({
+      severity: diagnostic.severity,
+      code: diagnostic.code,
+      message: diagnostic.message,
+      context: diagnostic.pluginId || diagnostic.filePath ? {
+        pluginId: diagnostic.pluginId,
+        filePath: diagnostic.filePath,
+      } : undefined,
+      remediation: diagnostic.remediation,
+      ts: diagnostic.ts ?? Date.now(),
     })),
   };
 }
@@ -287,6 +309,14 @@ describe('registerPluginRoutes', () => {
     expect(readiness.pluginRoutesMounted).toBe(true);
     expect(readiness.pluginRoutesCount).toBe(1);
     expect(readiness.pluginRouteErrors).toBe(0);
+    expect(platform.logger.warn).toHaveBeenCalledWith(
+      'Plugin route validation failed',
+      expect.objectContaining({
+        diagnosticEvent: 'plugin.routes.validation',
+        reasonCode: 'handler_not_found',
+        pluginId: '@kb-labs/test-plugin',
+      }),
+    );
   });
 
   it('handles invalid handler references gracefully', async () => {
@@ -327,6 +357,15 @@ describe('registerPluginRoutes', () => {
     expect(readiness.pluginRouteErrors).toBe(1);
     expect(readiness.pluginRouteFailures).toHaveLength(1);
     expect(readiness.pluginRouteFailures[0]?.error).toContain('rest_validation_failed');
+    expect(platform.logger.error).toHaveBeenCalledWith(
+      'All plugin routes failed validation; skipping plugin',
+      undefined,
+      expect.objectContaining({
+        diagnosticEvent: 'plugin.routes.validation',
+        reasonCode: 'route_validation_failed',
+        pluginId: '@kb-labs/test-plugin',
+      }),
+    );
   });
 
   it('mounts multiple plugins in parallel', async () => {
@@ -445,6 +484,22 @@ describe('registerPluginRoutes', () => {
     // Should still mount routes but log warnings
     expect(readiness.pluginRoutesMounted).toBe(true);
     expect(readiness.pluginRoutesCount).toBe(1);
+    expect(platform.logger.warn).toHaveBeenCalledWith(
+      'Registry snapshot is partial',
+      expect.objectContaining({
+        diagnosticEvent: 'plugin.registry.snapshot',
+        reasonCode: 'snapshot_partial',
+        serviceId: 'rest',
+      }),
+    );
+    expect(platform.logger.warn).toHaveBeenCalledWith(
+      'Registry snapshot is stale',
+      expect.objectContaining({
+        diagnosticEvent: 'plugin.registry.snapshot',
+        reasonCode: 'snapshot_stale',
+        serviceId: 'rest',
+      }),
+    );
   });
 
   it('uses custom basePath from manifest.rest.basePath', async () => {
@@ -632,6 +687,69 @@ describe('registerPluginSnapshotRoutes', () => {
     await app.close();
   });
 
+  it('logs a structured diagnostic when plugin registry refresh fails', async () => {
+    const cliApi = {
+      refresh: vi.fn(async () => {
+        throw new Error('Refresh exploded');
+      }),
+      snapshot: vi.fn(() => createMockSnapshot([])),
+    } as unknown as IEntityRegistry;
+
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/refresh',
+    });
+
+    expect(response.statusCode).toBe(500);
+    expect(platform.logger.error).toHaveBeenCalledWith(
+      'Failed to refresh plugin registry',
+      expect.any(Error),
+      expect.objectContaining({
+        diagnosticEvent: 'plugin.registry.refresh',
+        reasonCode: 'registry_refresh_failed',
+        serviceId: 'rest',
+      }),
+    );
+  });
+
+  it('logs discovery diagnostics when plugin registry refresh succeeds with blocking issues', async () => {
+    const cliApi = {
+      refresh: vi.fn(async () => undefined),
+      snapshot: vi.fn(() => createMockSnapshot([], {
+        diagnostics: [{
+          severity: 'error',
+          code: 'INTEGRITY_MISMATCH',
+          message: 'Integrity mismatch for "@kb-labs/commit"',
+          pluginId: '@kb-labs/commit',
+          filePath: '/workspace/plugins/commit/package.json',
+          remediation: 'Re-install: kb marketplace install @kb-labs/commit',
+        }],
+      })),
+    } as unknown as IEntityRegistry;
+
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/api/v1/plugins/refresh',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(platform.logger.error).toHaveBeenCalledWith(
+      'Integrity mismatch for "@kb-labs/commit"',
+      undefined,
+      expect.objectContaining({
+        diagnosticEvent: 'plugin.discovery.diagnostic',
+        reasonCode: 'integrity_mismatch',
+        pluginId: '@kb-labs/commit',
+        serviceId: 'rest',
+        discoveryCode: 'INTEGRITY_MISMATCH',
+      }),
+    );
+  });
+
   it('returns plugin registry from legacy endpoint', async () => {
     const manifest1 = createMockManifest({
       id: '@kb-labs/plugin-1',
@@ -729,5 +847,85 @@ describe('registerPluginSnapshotRoutes', () => {
     expect(response.statusCode).toBe(200);
     const payload = response.json() as { manifests: any[] };
     expect(payload.manifests).toEqual([]);
+  });
+
+  it('returns discovery diagnostics in plugin registry payload', async () => {
+    const snapshot = createMockSnapshot([], {
+      diagnostics: [{
+        severity: 'error',
+        code: 'INTEGRITY_MISMATCH',
+        message: 'Integrity mismatch for "@kb-labs/commit"',
+        pluginId: '@kb-labs/commit',
+        filePath: '/workspace/plugins/commit/package.json',
+        remediation: 'Re-install: kb marketplace install @kb-labs/commit',
+      }],
+    });
+
+    const cliApi = {
+      snapshot: vi.fn(() => snapshot),
+    } as unknown as IEntityRegistry;
+
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/plugins/registry',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json() as {
+      diagnostics: {
+        total: number;
+        items: Array<{ code: string; reasonCode: string; pluginId?: string }>;
+      };
+    };
+    expect(payload.diagnostics.total).toBe(1);
+    expect(payload.diagnostics.items[0]).toMatchObject({
+      code: 'INTEGRITY_MISMATCH',
+      reasonCode: 'integrity_mismatch',
+      pluginId: '@kb-labs/commit',
+    });
+  });
+
+  it('returns discovery diagnostics in plugin health payload', async () => {
+    const snapshot = createMockSnapshot([], {
+      diagnostics: [{
+        severity: 'error',
+        code: 'INTEGRITY_MISMATCH',
+        message: 'Integrity mismatch for "@kb-labs/commit"',
+        pluginId: '@kb-labs/commit',
+      }],
+    });
+
+    const cliApi = {
+      snapshot: vi.fn(() => snapshot),
+    } as unknown as IEntityRegistry;
+
+    await registerPluginSnapshotRoutes(app, BASE_CONFIG, cliApi);
+
+    const response = await app.inject({
+      method: 'GET',
+      url: '/api/v1/plugins/health',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const payload = response.json() as {
+      healthy: boolean;
+      diagnostics: {
+        total: number;
+        errors: number;
+        items: Array<{ code: string; reasonCode: string; pluginId?: string }>;
+      };
+      message: string;
+    };
+    expect(payload.healthy).toBe(false);
+    expect(payload.diagnostics.total).toBe(1);
+    expect(payload.diagnostics.errors).toBe(1);
+    expect(payload.diagnostics.items[0]).toMatchObject({
+      code: 'INTEGRITY_MISMATCH',
+      reasonCode: 'integrity_mismatch',
+      pluginId: '@kb-labs/commit',
+    });
+    expect(payload.message).toContain('discovery diagnostics');
   });
 });

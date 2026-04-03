@@ -36,7 +36,7 @@ export async function registerOpenAPIRoutes(
       const plugins = await restDomainOperationMetrics.observeOperation('plugin.registry.list', async () =>
         registry.listPlugins(),
       );
-      const specs = [];
+      const specs: unknown[] = [];
       
       for (const plugin of plugins) {
         const spec = await restDomainOperationMetrics.observeOperation('openapi.plugin.get', async () =>
@@ -48,7 +48,7 @@ export async function registerOpenAPIRoutes(
       }
       
       const merged = await restDomainOperationMetrics.observeOperation('openapi.plugins.aggregate', async () =>
-        mergeOpenAPISpecs(specs),
+        mergeOpenAPISpecs(specs as any),
       );
       
       // Add caching headers (1 hour)

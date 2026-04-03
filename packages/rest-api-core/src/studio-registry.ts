@@ -8,7 +8,7 @@
  * - widgetBundleDir: absolute filesystem path to dist/widgets/ (used by gateway to serve files)
  */
 
-import { resolve, join } from 'node:path';
+import { join } from 'node:path';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { StudioRegistryV2, StudioPluginEntryV2 } from '@kb-labs/rest-api-contracts';
 

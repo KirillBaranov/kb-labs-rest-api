@@ -188,7 +188,7 @@ export async function registerAdapterCallRoutes(
     const startMs = Date.now();
 
     // 3. Check registry
-    const entry = registry.get(adapter, method);
+    const entry = registry.get(adapter as string, method);
     if (!entry) {
       logger.warn('Adapter call rejected', { requestId, adapter, method, hostId: context.hostId });
       return reply.code(403).send({ ok: false, error: { code: 'ADAPTER_CALL_REJECTED', message: `Method not allowed: ${adapter}.${method}`, retryable: false } });

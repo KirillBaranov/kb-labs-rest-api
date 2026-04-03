@@ -27,7 +27,7 @@ function createMockSnapshot(rev: number): RegistrySnapshot {
     ttlMs: 60_000,
     partial: false,
     stale: false,
-    source: { cliVersion: 'test', cwd: process.cwd() },
+    source: { platformVersion: 'test', cwd: process.cwd() },
     corrupted: false,
     plugins: [],
     manifests: [],
@@ -61,8 +61,8 @@ describe('registerCacheRoutes', () => {
       const beforeSnapshot = createMockSnapshot(1);
       const afterSnapshot = createMockSnapshot(2);
       const plugins = [
-        { id: '@kb-labs/plugin-1', version: '1.0.0', kind: 'v3' as const, source: { kind: 'workspace' as const, path: '/plugins/plugin-1' } },
-        { id: '@kb-labs/plugin-2', version: '1.0.0', kind: 'v3' as const, source: { kind: 'workspace' as const, path: '/plugins/plugin-2' } },
+        { id: '@kb-labs/plugin-1', version: '1.0.0', source: { kind: 'local' as const, path: '/plugins/plugin-1' } },
+        { id: '@kb-labs/plugin-2', version: '1.0.0', source: { kind: 'local' as const, path: '/plugins/plugin-2' } },
       ];
 
       vi.mocked(mockCliApi.snapshot)
@@ -120,8 +120,7 @@ describe('registerCacheRoutes', () => {
       const plugins = Array.from({ length: 15 }, (_, i) => ({
         id: `@kb-labs/plugin-${i}`,
         version: '1.0.0',
-        kind: 'v3' as const,
-        source: { kind: 'workspace' as const, path: `/plugins/plugin-${i}` },
+        source: { kind: 'local' as const, path: `/plugins/plugin-${i}` },
       }));
 
       vi.mocked(mockCliApi.snapshot).mockReturnValue(snapshot);

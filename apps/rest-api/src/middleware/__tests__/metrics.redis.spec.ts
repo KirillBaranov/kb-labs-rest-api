@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import type { RedisStatus } from '@kb-labs/core-registry'
 import { metricsCollector } from '../metrics'
+
+type RedisStatus = {
+  enabled: boolean;
+  healthy: boolean;
+  roles: { publisher?: string | null; subscriber?: string | null; cache?: string | null };
+};
 
 function redisStatus(overrides: Partial<RedisStatus> = {}): RedisStatus {
   const baseRoles: RedisStatus['roles'] = {

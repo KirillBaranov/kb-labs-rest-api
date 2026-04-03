@@ -14,6 +14,11 @@ import { mountRoutes } from '@kb-labs/plugin-execution/http';
 import { mountWebSocketChannels } from '@kb-labs/plugin-execution';
 import { combineManifestsToRegistry } from '@kb-labs/rest-api-core';
 import { platform } from '@kb-labs/core-runtime';
+import {
+  logDiagnosticEvent,
+  type DiagnosticLogLevel,
+} from '@kb-labs/core-platform';
+import type { DiagnosticReasonCode } from '@kb-labs/core-contracts';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import type { ReadinessState } from './readiness';
@@ -99,12 +104,41 @@ export async function registerPluginRoutes(
     });
 
     if (snapshot.partial || snapshot.stale) {
-      platform.logger.warn('Registry snapshot is partial or stale', {
-        partial: snapshot.partial,
-        stale: snapshot.stale,
-        rev: snapshot.rev,
-      });
+      if (snapshot.partial) {
+        logDiagnosticEvent(platform.logger, {
+          domain: 'registry',
+          event: 'plugin.registry.snapshot',
+          level: 'warn',
+          reasonCode: 'snapshot_partial',
+          message: 'Registry snapshot is partial',
+          outcome: 'failed',
+          serviceId: 'rest',
+          evidence: {
+            rev: snapshot.rev,
+            generatedAt: snapshot.generatedAt,
+          },
+        });
+      }
+
+      if (snapshot.stale) {
+        logDiagnosticEvent(platform.logger, {
+          domain: 'registry',
+          event: 'plugin.registry.snapshot',
+          level: 'warn',
+          reasonCode: 'snapshot_stale',
+          message: 'Registry snapshot is stale',
+          outcome: 'failed',
+          serviceId: 'rest',
+          evidence: {
+            rev: snapshot.rev,
+            generatedAt: snapshot.generatedAt,
+            expiresAt: snapshot.expiresAt,
+          },
+        });
+      }
     }
+
+    emitRegistrySnapshotDiagnostics(snapshot);
 
     // Use platform's unified ExecutionBackend (initialized in bootstrap.ts)
     const backend = platform.executionBackend;
@@ -125,13 +159,18 @@ export async function registerPluginRoutes(
     // ── Phase 1: Batch-validate all handler files in one I/O pass ──
     // Collect all handler file paths across all plugins, then validate in a single Promise.all()
     // This avoids interleaved fs.access() calls that caused race conditions with parallel mounting.
+    //
+    // Handler paths in manifests are relative to the plugin's dist/ directory, because manifests
+    // are loaded from dist/manifest.js. pluginRoot points to the package root, so we resolve
+    // handlers relative to pluginRoot/dist/ to match where the compiled files actually live.
     const handlerChecks: Array<{ key: string; filePath: string }> = [];
     for (const entry of mountableManifests) {
       if (entry.manifest.rest?.routes) {
         for (const route of entry.manifest.rest.routes) {
           const handlerFile = route.handler.split('#')[0];
           if (handlerFile) {
-            const handlerPath = path.resolve(entry.pluginRoot, handlerFile);
+            const pluginDistRoot = path.join(entry.pluginRoot, 'dist');
+            const handlerPath = path.resolve(pluginDistRoot, handlerFile);
             handlerChecks.push({
               key: `${entry.manifest.id}::${route.method} ${route.path}`,
               filePath: handlerPath,
@@ -176,6 +215,7 @@ export async function registerPluginRoutes(
 
     for (const entry of mountableManifests) {
       const { manifest, pluginRoot } = entry;
+      const pluginDistRoot = path.join(pluginRoot, 'dist');
 
       // Validate routes using pre-built handler map (no I/O here)
       const restValidationErrors: string[] = [];
@@ -199,6 +239,24 @@ export async function registerPluginRoutes(
       }
 
       if (restValidationErrors.length > 0) {
+        const reasonCode = inferRouteValidationReasonCode(restValidationErrors);
+        logDiagnosticEvent(platform.logger, {
+          event: 'plugin.routes.validation',
+          level: resolveRouteValidationLogLevel(restValidationErrors, manifest.rest?.routes?.length ?? 0),
+          reasonCode,
+          message: 'Plugin route validation failed',
+          outcome: 'failed',
+          pluginId: manifest.id,
+          pluginVersion: manifest.version,
+          serviceId: 'rest',
+          issues: restValidationErrors,
+          remediation: 'Verify handler file paths, exports, and route schema.',
+          evidence: {
+            pluginRoot,
+            totalRoutes: manifest.rest?.routes?.length ?? 0,
+          },
+        });
+
         platform.logger.warn('REST validation errors found, will skip problematic routes but continue mounting others', {
           plugin: `${manifest.id}@${manifest.version}`,
           pluginRoot,
@@ -218,10 +276,19 @@ export async function registerPluginRoutes(
 
         if (validRoutes.length === 0) {
           restDomainOperationMetrics.recordOperation('plugin.routes.mount', 0, 'error');
-          platform.logger.error('All routes failed validation, skipping plugin', undefined, {
-            plugin: `${manifest.id}@${manifest.version}`,
-            pluginRoot,
-            errors: restValidationErrors,
+          logDiagnosticEvent(platform.logger, {
+            event: 'plugin.routes.validation',
+            level: 'error',
+            reasonCode,
+            message: 'All plugin routes failed validation; skipping plugin',
+            outcome: 'failed',
+            pluginId: manifest.id,
+            pluginVersion: manifest.version,
+            serviceId: 'rest',
+            issues: restValidationErrors,
+            evidence: {
+              pluginRoot,
+            },
           });
           errors += 1;
           failed.push(manifest.id);
@@ -268,7 +335,7 @@ export async function registerPluginRoutes(
 
         await mountRoutes(server, manifest, {
           backend,
-          pluginRoot,
+          pluginRoot: pluginDistRoot,
           workspaceRoot,
           basePath: pluginBasePath,
           defaultTimeoutMs: gatewayTimeoutMs,
@@ -325,7 +392,7 @@ export async function registerPluginRoutes(
 
             const wsResult = await mountWebSocketChannels(server, manifest, {
               backend,
-              pluginRoot,
+              pluginRoot: pluginDistRoot,
               workspaceRoot,
               basePath: wsBasePath,
               defaultTimeoutMs: manifest.ws.defaults?.timeoutMs ?? gatewayTimeoutMs,
@@ -349,10 +416,21 @@ export async function registerPluginRoutes(
                 errors: wsResult.errors,
               });
             }
-          } catch (wsError) {
-            platform.logger.error(
-              'Failed to mount WebSocket channels',
-              wsError instanceof Error ? wsError : new Error(String(wsError)),
+        } catch (wsError) {
+          logDiagnosticEvent(platform.logger, {
+            event: 'plugin.ws.mount',
+            level: 'error',
+            reasonCode: 'ws_mount_failed',
+            message: 'Failed to mount plugin WebSocket channels',
+            outcome: 'failed',
+            error: wsError instanceof Error ? wsError : new Error(String(wsError)),
+            pluginId: manifest.id,
+            pluginVersion: manifest.version,
+            serviceId: 'rest',
+          });
+          platform.logger.error(
+            'Failed to mount WebSocket channels',
+            wsError instanceof Error ? wsError : new Error(String(wsError)),
               { plugin: manifest.id }
             );
           }
@@ -364,6 +442,17 @@ export async function registerPluginRoutes(
       } catch (error) {
         mountMetrics.recordFailure(manifest.id, shortErrorMessage(error));
         restDomainOperationMetrics.recordOperation('plugin.routes.mount', 0, 'error');
+        logDiagnosticEvent(platform.logger, {
+          event: 'plugin.routes.mount',
+          level: 'error',
+          reasonCode: 'route_mount_failed',
+          message: 'Failed to mount plugin routes',
+          outcome: 'failed',
+          error: error instanceof Error ? error : new Error(String(error)),
+          pluginId: manifest.id,
+          pluginVersion: manifest.version,
+          serviceId: 'rest',
+        });
         platform.logger.error(
           'Failed to mount plugin routes',
           error instanceof Error ? error : new Error(String(error)),
@@ -396,6 +485,16 @@ export async function registerPluginRoutes(
       errors,
     });
   } catch (error) {
+    logDiagnosticEvent(platform.logger, {
+      domain: 'registry',
+      event: 'plugin.discovery',
+      level: 'error',
+      reasonCode: 'plugin_discovery_failed',
+      message: 'Plugin discovery failed during route registration',
+      outcome: 'failed',
+      error: error instanceof Error ? error : new Error(String(error)),
+      serviceId: 'rest',
+    });
     platform.logger.error(
       'Plugin discovery failed',
       error instanceof Error ? error : new Error(String(error))
@@ -448,6 +547,7 @@ export async function registerPluginSnapshotRoutes(
       const snapshot = await restDomainOperationMetrics.observeOperation('plugin.registry.snapshot', async () =>
         registry.snapshot(),
       );
+      emitRegistrySnapshotDiagnostics(snapshot);
 
       reply.type('application/json');
       return {
@@ -461,6 +561,16 @@ export async function registerPluginSnapshotRoutes(
         },
       };
     } catch (error) {
+      logDiagnosticEvent(platform.logger, {
+        domain: 'registry',
+        event: 'plugin.registry.refresh',
+        level: 'error',
+        reasonCode: 'registry_refresh_failed',
+        message: 'Failed to refresh plugin registry',
+        outcome: 'failed',
+        error: error instanceof Error ? error : new Error(String(error)),
+        serviceId: 'rest',
+      });
       platform.logger.error(
         'Failed to refresh plugin registry',
         error instanceof Error ? error : new Error(String(error))
@@ -514,6 +624,19 @@ export async function registerPluginSnapshotRoutes(
       return {
         manifests: manifestsWithTimestamps,
         apiBasePath: basePath,
+        diagnostics: {
+          total: snapshot.diagnostics?.length ?? 0,
+          items: (snapshot.diagnostics ?? []).map((diagnostic) => ({
+            severity: diagnostic.severity,
+            code: diagnostic.code,
+            reasonCode: mapRegistryDiagnosticReasonCode(diagnostic.code),
+            message: diagnostic.message,
+            pluginId: diagnostic.context?.pluginId,
+            filePath: diagnostic.context?.filePath,
+            remediation: diagnostic.remediation,
+            ts: diagnostic.ts,
+          })),
+        },
       };
     } catch (error) {
       platform.logger.error(
@@ -629,7 +752,9 @@ export async function registerPluginSnapshotRoutes(
       }
 
       // Registry resolution errors (plugins that failed to load)
-      const registryErrors = snapshot.errors || [];
+      const registryErrors = (snapshot as any).errors ?? [];
+      const discoveryDiagnostics = snapshot.diagnostics ?? [];
+      const discoveryErrorCount = discoveryDiagnostics.filter((diagnostic) => diagnostic.severity === 'error').length;
 
       // Determine why registry is partial
       const partialReasons: string[] = [];
@@ -639,6 +764,9 @@ export async function registerPluginSnapshotRoutes(
       if (registryErrors.length > 0) {
         partialReasons.push('registry_errors');
       }
+      if (discoveryErrorCount > 0) {
+        partialReasons.push('discovery_diagnostics');
+      }
       // If partial but no clear reason, it's likely initialization
       if (snapshot.partial && partialReasons.length === 0) {
         partialReasons.push('initialization_incomplete');
@@ -646,7 +774,7 @@ export async function registerPluginSnapshotRoutes(
 
       reply.type('application/json');
       return {
-        healthy: !snapshot.partial && !snapshot.stale && validationIssues.length === 0 && registryErrors.length === 0,
+        healthy: !snapshot.partial && !snapshot.stale && validationIssues.length === 0 && registryErrors.length === 0 && discoveryErrorCount === 0,
         snapshot: {
           partial: snapshot.partial,
           stale: snapshot.stale,
@@ -658,11 +786,26 @@ export async function registerPluginSnapshotRoutes(
         },
         registryErrors: {
           total: registryErrors.length,
-          items: registryErrors.map((err) => ({
+          items: registryErrors.map((err: any) => ({
             pluginPath: err.pluginPath,
             pluginId: err.pluginId,
             error: err.error,
             code: err.code,
+          })),
+        },
+        diagnostics: {
+          total: discoveryDiagnostics.length,
+          errors: discoveryErrorCount,
+          warnings: discoveryDiagnostics.filter((diagnostic) => diagnostic.severity === 'warning').length,
+          items: discoveryDiagnostics.map((diagnostic) => ({
+            severity: diagnostic.severity,
+            code: diagnostic.code,
+            reasonCode: mapRegistryDiagnosticReasonCode(diagnostic.code),
+            message: diagnostic.message,
+            pluginId: diagnostic.context?.pluginId,
+            filePath: diagnostic.context?.filePath,
+            remediation: diagnostic.remediation,
+            ts: diagnostic.ts,
           })),
         },
         validation: {
@@ -672,6 +815,8 @@ export async function registerPluginSnapshotRoutes(
         message:
           registryErrors.length > 0
             ? `Registry is partial - ${registryErrors.length} plugin(s) failed to load. Check registryErrors.items for details.`
+            : discoveryErrorCount > 0
+              ? `Registry has discovery diagnostics - ${discoveryErrorCount} blocking issue(s). Check diagnostics.items for details.`
             : snapshot.partial && partialReasons.includes('initialization_incomplete')
               ? 'Registry is partial - initialization incomplete. Try refreshing or wait for the snapshot rebuild to complete.'
               : snapshot.partial
@@ -781,4 +926,73 @@ function shortErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
   const firstLine = message.trim().split('\n')[0] ?? message.trim();
   return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
+}
+
+function mapDiagnosticSeverityToLogLevel(
+  severity: 'error' | 'warning' | 'info' | 'debug',
+): DiagnosticLogLevel {
+  switch (severity) {
+    case 'error':
+      return 'error';
+    case 'warning':
+      return 'warn';
+    case 'debug':
+      return 'debug';
+    default:
+      return 'info';
+  }
+}
+
+function mapRegistryDiagnosticReasonCode(code: string): DiagnosticReasonCode {
+  switch (code) {
+    case 'MANIFEST_NOT_FOUND':
+      return 'manifest_missing';
+    case 'MANIFEST_VALIDATION_ERROR':
+    case 'MANIFEST_PARSE_ERROR':
+      return 'manifest_invalid';
+    case 'MANIFEST_LOAD_TIMEOUT':
+      return 'manifest_load_timeout';
+    case 'INTEGRITY_MISMATCH':
+      return 'integrity_mismatch';
+    default:
+      return 'plugin_discovery_failed';
+  }
+}
+
+function emitRegistrySnapshotDiagnostics(snapshot: RegistrySnapshot): void {
+  for (const diagnostic of snapshot.diagnostics ?? []) {
+    logDiagnosticEvent(platform.logger, {
+      domain: 'registry',
+      event: 'plugin.discovery.diagnostic',
+      level: mapDiagnosticSeverityToLogLevel(diagnostic.severity),
+      reasonCode: mapRegistryDiagnosticReasonCode(diagnostic.code),
+      message: diagnostic.message,
+      outcome: diagnostic.severity === 'error' ? 'failed' : 'skipped',
+      pluginId: diagnostic.context?.pluginId,
+      serviceId: 'rest',
+      manifestPath: diagnostic.context?.filePath,
+      discoveryCode: diagnostic.code,
+      remediation: diagnostic.remediation,
+      evidence: {
+        severity: diagnostic.severity,
+        entityKind: diagnostic.context?.entityKind,
+        entityId: diagnostic.context?.entityId,
+        ts: diagnostic.ts,
+      },
+    });
+  }
+}
+
+function inferRouteValidationReasonCode(errors: string[]): DiagnosticReasonCode {
+  if (errors.some((error) => error.includes('Handler file not found'))) {
+    return 'handler_not_found';
+  }
+  return 'route_validation_failed';
+}
+
+function resolveRouteValidationLogLevel(
+  errors: string[],
+  totalRoutes: number,
+): DiagnosticLogLevel {
+  return errors.length >= totalRoutes ? 'error' : 'warn';
 }

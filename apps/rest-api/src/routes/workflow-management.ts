@@ -33,19 +33,8 @@ import { normalizeBasePath } from '../utils/path-helpers';
 // Helper Functions
 // ============================================================================
 
-function createError(statusCode: number, code: string, message: string) {
-  const error = new Error(message);
-  (error as any).statusCode = statusCode;
-  (error as any).code = code;
-  return error;
-}
-
-function getWorkflowId(params: unknown): string {
-  const id = (params as { id?: unknown } | undefined)?.id;
-  if (!id || typeof id !== 'string') {
-    throw createError(400, 'WF_ID_REQUIRED', 'Workflow id must be provided');
-  }
-  return id;
+function errPayload(code: string, message: string) {
+  return { ok: false as const, message, error: { code, message } };
 }
 
 // ============================================================================
@@ -70,7 +59,7 @@ export async function registerWorkflowManagementRoutes(
 
   // Initialize services
   const workflowService = new WorkflowService({
-    registry,
+    cliApi: registry,
     platform,
     workflowStorageDir: '.kb/workflows',
   });
@@ -148,7 +137,7 @@ export async function registerWorkflowManagementRoutes(
         );
       }
 
-      reply.send({ workflows: filtered, total: filtered.length });
+      reply.send({ workflows: filtered as any, total: filtered.length });
     },
   });
 
@@ -168,7 +157,7 @@ export async function registerWorkflowManagementRoutes(
     },
     handler: async (request, reply) => {
       const handlers = await workflowService.getAvailableHandlers();
-      reply.send({ handlers, total: handlers.length });
+      reply.send({ handlers: handlers as any, total: handlers.length });
     },
   });
 
@@ -184,12 +173,12 @@ export async function registerWorkflowManagementRoutes(
       summary: 'Validate workflow spec',
       body: ValidateWorkflowBodySchema,
       response: {
-        200: z.record(z.unknown()),
+        200: z.record(z.string(), z.unknown()),
       },
     },
     handler: async (request, reply) => {
       const result = await workflowService.validate(request.body.spec);
-      reply.send(result);
+      reply.send(result as any);
     },
   });
 
@@ -213,10 +202,10 @@ export async function registerWorkflowManagementRoutes(
       const workflow = await workflowService.get(request.params.id);
 
       if (!workflow) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${request.params.id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${request.params.id} not found`) as any);
       }
 
-      reply.send({ workflow });
+      reply.send({ workflow } as any);
     },
   });
 
@@ -237,8 +226,8 @@ export async function registerWorkflowManagementRoutes(
       },
     },
     handler: async (request, reply) => {
-      const workflow = await workflowService.create(request.body.spec);
-      reply.code(201).send({ workflow });
+      const workflow = await workflowService.create(request.body.spec as any);
+      reply.code(201).send({ workflow } as any);
     },
   });
 
@@ -265,11 +254,11 @@ export async function registerWorkflowManagementRoutes(
 
       const existing = await workflowService.get(id);
       if (!existing) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${id} not found`) as any);
       }
 
       if ((existing as any).source !== 'standalone') {
-        throw createError(400, 'WF_NOT_STANDALONE', `Cannot update manifest-based workflow ${id}`);
+        return reply.code(400).send(errPayload('WF_NOT_STANDALONE', `Cannot update manifest-based workflow ${id}`) as any);
       }
 
       if (request.body.spec) {
@@ -287,7 +276,7 @@ export async function registerWorkflowManagementRoutes(
       }
 
       const workflow = await workflowService.get(id);
-      reply.send({ workflow });
+      reply.send({ workflow } as any);
     },
   });
 
@@ -313,15 +302,15 @@ export async function registerWorkflowManagementRoutes(
 
       const existing = await workflowService.get(id);
       if (!existing) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${id} not found`) as any);
       }
 
       if ((existing as any).source !== 'standalone') {
-        throw createError(400, 'WF_NOT_STANDALONE', `Cannot delete manifest-based workflow ${id}`);
+        return reply.code(400).send(errPayload('WF_NOT_STANDALONE', `Cannot delete manifest-based workflow ${id}`) as any);
       }
 
       await workflowService.delete(id);
-      reply.code(204).send();
+      reply.code(204).send(null);
     },
   });
 
@@ -353,11 +342,11 @@ export async function registerWorkflowManagementRoutes(
 
       const existing = await workflowService.get(id);
       if (!existing) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${id} not found`) as any);
       }
 
       if ((existing as any).source !== 'standalone') {
-        throw createError(400, 'WF_NOT_STANDALONE', `Cannot modify schedule for manifest-based workflow ${id}`);
+        return reply.code(400).send(errPayload('WF_NOT_STANDALONE', `Cannot modify schedule for manifest-based workflow ${id}`) as any);
       }
 
       const workflow = await workflowService.update(id, {
@@ -368,7 +357,7 @@ export async function registerWorkflowManagementRoutes(
         },
       });
 
-      reply.send({ workflow });
+      reply.send({ workflow } as any);
     },
   });
 
@@ -394,15 +383,15 @@ export async function registerWorkflowManagementRoutes(
 
       const existing = await workflowService.get(id);
       if (!existing) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${id} not found`) as any);
       }
 
       if ((existing as any).source !== 'standalone') {
-        throw createError(400, 'WF_NOT_STANDALONE', `Cannot modify schedule for manifest-based workflow ${id}`);
+        return reply.code(400).send(errPayload('WF_NOT_STANDALONE', `Cannot modify schedule for manifest-based workflow ${id}`) as any);
       }
 
       const workflow = await workflowService.update(id, { on: { schedule: undefined } });
-      reply.send({ workflow });
+      reply.send({ workflow } as any);
     },
   });
 
@@ -428,16 +417,16 @@ export async function registerWorkflowManagementRoutes(
 
       const existing = await workflowService.get(id);
       if (!existing) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${id} not found`) as any);
       }
 
       if ((existing as any).source !== 'standalone') {
-        throw createError(400, 'WF_NOT_STANDALONE', `Cannot pause manifest-based workflow ${id}`);
+        return reply.code(400).send(errPayload('WF_NOT_STANDALONE', `Cannot pause manifest-based workflow ${id}`) as any);
       }
 
       await workflowService.pause(id);
       const workflow = await workflowService.get(id);
-      reply.send({ workflow });
+      reply.send({ workflow } as any);
     },
   });
 
@@ -463,16 +452,16 @@ export async function registerWorkflowManagementRoutes(
 
       const existing = await workflowService.get(id);
       if (!existing) {
-        throw createError(404, 'WF_NOT_FOUND', `Workflow ${id} not found`);
+        return reply.code(404).send(errPayload('WF_NOT_FOUND', `Workflow ${id} not found`) as any);
       }
 
       if ((existing as any).source !== 'standalone') {
-        throw createError(400, 'WF_NOT_STANDALONE', `Cannot resume manifest-based workflow ${id}`);
+        return reply.code(400).send(errPayload('WF_NOT_STANDALONE', `Cannot resume manifest-based workflow ${id}`) as any);
       }
 
       await workflowService.resume(id);
       const workflow = await workflowService.get(id);
-      reply.send({ workflow });
+      reply.send({ workflow } as any);
     },
   });
 

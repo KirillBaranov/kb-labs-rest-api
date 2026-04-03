@@ -249,7 +249,6 @@ function buildFallbackSnapshot(
     uptimeSec: Math.max(0, Math.floor(process.uptime())),
     version: {
       kbLabs: process.env.KB_LABS_VERSION || process.env.KB_VERSION || 'unknown',
-      cli: process.env.KB_CLI_VERSION || 'unknown',
       rest: REST_VERSION,
     },
     registry: {

@@ -67,7 +67,7 @@ export async function registerEventRoutes(
           const ready = isReady(readiness);
           const reason = resolveReadinessReason(readiness);
           const pluginSnapshot = metricsCollector.getLastPluginMountSnapshot();
-          const redisStatus = registry.getRedisStatus?.();
+          const redisStatus = (registry as any).getRedisStatus?.();
           send({
             type: 'health',
             status: health.status,

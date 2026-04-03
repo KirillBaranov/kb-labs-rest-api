@@ -82,7 +82,7 @@ export async function registerJobsRoutes(
         jobs = jobs.filter((job) => job.status === request.query.status);
       }
 
-      return reply.send({ jobs });
+      return reply.send({ jobs: jobs as any });
     },
   });
 
@@ -107,7 +107,7 @@ export async function registerJobsRoutes(
       }
 
       const jobs = cronManager.list();
-      return reply.send({ stats: { total: jobs.length, jobs } });
+      return reply.send({ stats: { total: jobs.length, jobs: jobs as any } });
     },
   });
 
@@ -141,7 +141,7 @@ export async function registerJobsRoutes(
         throw createError(404, 'JOB_NOT_FOUND', `Job ${jobId} not found`);
       }
 
-      return reply.send({ job });
+      return reply.send({ job: job as any });
     },
   });
 

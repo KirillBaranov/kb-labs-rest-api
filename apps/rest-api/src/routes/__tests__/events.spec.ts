@@ -43,7 +43,7 @@ function createMockSnapshot(): RegistrySnapshot {
     ttlMs: 60_000,
     partial: false,
     stale: false,
-    source: { cliVersion: 'test', cwd: process.cwd() },
+    source: { platformVersion: 'test', cwd: process.cwd() },
     corrupted: false,
     plugins: [],
     manifests: [],
@@ -61,7 +61,6 @@ function createMockHealthSnapshot(): SystemHealthSnapshot {
     uptimeSec: 42,
     version: {
       kbLabs: '1.0.0',
-      cli: '1.0.0',
       rest: '1.0.0',
     },
     registry: {
@@ -221,7 +220,7 @@ describe('registerEventRoutes', () => {
     });
 
     it('includes Redis status in health event when Redis is enabled', async () => {
-      vi.mocked(mockCliApi.getRedisStatus!).mockReturnValue({
+      vi.mocked((mockCliApi as any).getRedisStatus).mockReturnValue({
         enabled: true,
         healthy: true,
         roles: {

@@ -1,6 +1,10 @@
 import { performance } from 'node:perf_hooks';
 import type { FastifyInstance } from 'fastify';
-import type { RedisStatus } from '@kb-labs/core-registry';
+type RedisStatus = {
+  enabled: boolean;
+  healthy: boolean;
+  roles: { publisher?: string | null; subscriber?: string | null; cache?: string | null };
+};
 import { OperationMetricsTracker } from '@kb-labs/shared-http';
 import {
   httpRequestDuration,
