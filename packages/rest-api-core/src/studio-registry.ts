@@ -9,8 +9,18 @@
  */
 
 import { join } from 'node:path';
+import { statSync } from 'node:fs';
 import type { ManifestV3 } from '@kb-labs/plugin-contracts';
 import type { StudioRegistryV2, StudioPluginEntryV2 } from '@kb-labs/rest-api-contracts';
+
+function getRemoteEntryVersion(widgetBundleDir: string): string {
+  try {
+    const stat = statSync(join(widgetBundleDir, 'remoteEntry.js'));
+    return String(Math.floor(stat.mtimeMs));
+  } catch {
+    return '0';
+  }
+}
 
 /**
  * Convert a single ManifestV3 with studio V2 config to a registry entry.
@@ -32,7 +42,7 @@ export function manifestToRegistryEntry(
     displayName: manifest.display?.name,
     pluginVersion: manifest.version,
     remoteName: studio.remoteName,
-    remoteEntryUrl: `/plugins/${manifest.id}/widgets/remoteEntry.js`,
+    remoteEntryUrl: `/plugins/${manifest.id}/widgets/remoteEntry.js?v=${getRemoteEntryVersion(join(pluginRoot, 'dist', 'widgets'))}`,
     widgetBundleDir: join(pluginRoot, 'dist', 'widgets'),
     pages: studio.pages ?? [],
     menus: studio.menus ?? [],
