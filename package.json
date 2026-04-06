@@ -1,7 +1,12 @@
 {
   "name": "@kb-labs/rest-api",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "REST API service for KB Labs ecosystem",
+  "files": [
+    "packages/*/dist",
+    "apps/*/dist",
+    "README.md"
+  ],
   "type": "module",
   "author": {
     "name": "Kirill Baranov",
