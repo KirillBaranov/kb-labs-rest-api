@@ -1,6 +1,6 @@
 {
   "name": "@kb-labs/rest-api-core",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Core REST API functionality for KB Labs, including request handling and routing",
   "type": "module",
   "main": "./dist/index.js",
