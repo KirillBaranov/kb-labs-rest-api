@@ -1,9 +1,12 @@
 {
   "name": "@kb-labs/rest-api-app",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "REST API application for KB Labs, providing HTTP endpoints for plugin functionality",
   "type": "module",
   "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "clean": "rimraf dist",
     "build": "tsup",
