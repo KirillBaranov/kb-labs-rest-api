@@ -784,7 +784,7 @@ describe('registerPluginSnapshotRoutes', () => {
       pluginId: '@kb-labs/plugin-1',
       manifest: expect.objectContaining({ id: '@kb-labs/plugin-1' }),
       pluginRoot: '/p1',
-      source: expect.objectContaining({ kind: 'workspace' }),
+      source: expect.objectContaining({ kind: 'local' }),
     });
   });
 

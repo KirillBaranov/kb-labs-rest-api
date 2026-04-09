@@ -8,7 +8,7 @@ const pkg = JSON.parse(readFileSync('./package.json', 'utf8'));
 export default defineConfig({
   ...nodePreset,
   tsconfig: "tsconfig.build.json", // Use build-specific tsconfig without paths
-  entry: ['src/index.ts'],
+  entry: ['src/index.ts', 'src/manifest.ts'],
   outDir: 'dist',
   // Inject version at build time to avoid runtime require('../../package.json')
   define: {

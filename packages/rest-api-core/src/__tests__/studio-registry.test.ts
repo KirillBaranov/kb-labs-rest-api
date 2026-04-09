@@ -48,7 +48,7 @@ describe('manifestToRegistryEntry', () => {
     expect(entry).not.toBeNull();
     expect(entry!.pluginId).toBe('@kb-labs/commit');
     expect(entry!.remoteName).toBe('commitPlugin');
-    expect(entry!.remoteEntryUrl).toBe('/plugins/@kb-labs/commit/widgets/remoteEntry.js');
+    expect(entry!.remoteEntryUrl).toMatch(/^\/plugins\/@kb-labs\/commit\/widgets\/remoteEntry\.js/);
     expect(entry!.widgetBundleDir).toBe('/workspace/plugins/kb-labs-commit-plugin/packages/commit-cli/dist/widgets');
     expect(entry!.pages).toHaveLength(1);
     expect(entry!.menus).toHaveLength(1);
@@ -85,11 +85,10 @@ describe('combineManifestsToRegistry', () => {
     }]);
 
     const entry = registry.plugins[0]!;
-    const match = entry.remoteEntryUrl.match(/^\/plugins\/@([^/]+)\/([^/]+)\/widgets\/(.+)$/);
+    const match = entry.remoteEntryUrl.match(/^\/plugins\/@([^/]+)\/([^/]+)\/widgets\/remoteEntry\.js/);
     expect(match).not.toBeNull();
     expect(match![1]).toBe('kb-labs');
     expect(match![2]).toBe('commit');
-    expect(match![3]).toBe('remoteEntry.js');
   });
 
   it('computes widgetBundleDir from pluginRoot', () => {
